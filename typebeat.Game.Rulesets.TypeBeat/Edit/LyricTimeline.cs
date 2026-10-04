@@ -15,7 +15,6 @@ using osu.Framework.Graphics.Shapes;
 using osu.Framework.Graphics.Sprites;
 using osu.Framework.Input.Events;
 using osu.Framework.Localisation;
-using typebeat.Game.Beatmaps;
 using typebeat.Game.Graphics.Cursor;
 using typebeat.Game.Graphics.Fonts;
 using typebeat.Game.Graphics.Sprites;
@@ -71,9 +70,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         [Resolved(CanBeNull = true)]
         private LyricFontManager? lyricFontManager { get; set; }
 
-        [Resolved(CanBeNull = true)]
-        private IBindable<WorkingBeatmap>? workingBeatmap { get; set; }
-
         [Resolved]
         private EditorClock editorClock { get; set; } = null!;
 
@@ -94,7 +90,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         private readonly ResizeCursorContainer resizeCursor;
 
         private double windowStart, windowLength = 1;
-        private readonly LyricFontResolutionCache lyricFontResolution = new LyricFontResolutionCache();
+        private readonly EditorLyricFontResolutionCache lyricFontResolution = new EditorLyricFontResolutionCache();
         private string? lyricFontFamily;
 
         // Video-editor semantics: this strip owns its horizontal view offset. Panning moves the
@@ -235,8 +231,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
             if (timeline == null || !timeline.IsLoaded)
                 return;
 
-            var metadata = editorBeatmap.BeatmapInfo.Metadata;
-            lyricFontFamily = lyricFontResolution.ResolveForMap(lyricFontConfig, lyricFontManager, metadata.LyricFont, metadata.LyricFontFile, workingBeatmap?.Value);
+            lyricFontFamily = lyricFontResolution.ResolveForEditor(lyricFontConfig, lyricFontManager);
 
             // The view is owned locally; the strip no longer drives (or reads, beyond the initial
             // zoom snapshot) the shared waveform timeline, so neither panning nor zooming seeks the

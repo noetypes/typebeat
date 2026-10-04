@@ -5,11 +5,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using osu.Framework.Allocation;
-using osu.Framework.Bindables;
 using osu.Framework.Extensions.Color4Extensions;
 using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
-using typebeat.Game.Beatmaps;
 using typebeat.Game.Graphics.Containers;
 using typebeat.Game.Graphics.Fonts;
 using typebeat.Game.Graphics.Sprites;
@@ -54,10 +52,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         [Resolved(CanBeNull = true)]
         private LyricFontManager? lyricFontManager { get; set; }
 
-        [Resolved(CanBeNull = true)]
-        private IBindable<WorkingBeatmap>? workingBeatmap { get; set; }
-
-        private readonly LyricFontResolutionCache lyricFontResolution = new LyricFontResolutionCache();
+        private readonly EditorLyricFontResolutionCache lyricFontResolution = new EditorLyricFontResolutionCache();
         private string? resolvedLyricFont;
         private readonly FillFlowContainer columns;
         private string shown = string.Empty;
@@ -89,8 +84,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         {
             base.Update();
 
-            var metadata = editorBeatmap.BeatmapInfo.Metadata;
-            string? nextLyricFont = lyricFontResolution.ResolveForMap(lyricFontConfig, lyricFontManager, metadata.LyricFont, metadata.LyricFontFile, workingBeatmap?.Value);
+            string? nextLyricFont = lyricFontResolution.ResolveForEditor(lyricFontConfig, lyricFontManager);
 
             if (!string.Equals(nextLyricFont, resolvedLyricFont, StringComparison.Ordinal))
             {

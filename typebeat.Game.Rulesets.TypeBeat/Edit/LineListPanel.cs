@@ -56,9 +56,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         [Resolved(canBeNull: true)]
         private LyricFontManager? fontManager { get; set; }
 
-        [Resolved(canBeNull: true)]
-        private IBindable<WorkingBeatmap>? workingBeatmap { get; set; }
-
         private readonly FillFlowContainer<LineRow> rows;
         private readonly OsuScrollContainer scroll;
         private readonly Container listArea;
@@ -67,7 +64,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         private bool? lastToggleAvailable;
         private BeatmapLanguage? lastCheckedLanguage;
         private int lastCheckedRevision = -1;
-        private readonly LyricFontResolutionCache lyricFontResolution = new LyricFontResolutionCache();
+        private readonly EditorLyricFontResolutionCache lyricFontResolution = new EditorLyricFontResolutionCache();
         private string? lyricFontFamily;
 
 
@@ -308,11 +305,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
 
         private void updateLyricFont()
         {
-            string? mapFamily = editorBeatmap.BeatmapInfo.Metadata.LyricFont;
-            string? mapFontFile = editorBeatmap.BeatmapInfo.Metadata.LyricFontFile;
-            WorkingBeatmap? working = workingBeatmap?.Value;
-
-            string? resolved = lyricFontResolution.ResolveForMap(config, fontManager, mapFamily, mapFontFile, working);
+            string? resolved = lyricFontResolution.ResolveForEditor(config, fontManager);
 
             if (resolved == lyricFontFamily)
                 return;

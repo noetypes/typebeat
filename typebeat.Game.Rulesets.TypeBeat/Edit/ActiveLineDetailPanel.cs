@@ -8,7 +8,6 @@ using osu.Framework.Extensions.ObjectExtensions;
 using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
 using osu.Framework.Graphics.Shapes;
-using typebeat.Game.Beatmaps;
 using typebeat.Game.Graphics.Fonts;
 using typebeat.Game.Graphics.Sprites;
 using typebeat.Game.Graphics.UserInterfaceV2;
@@ -41,9 +40,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         [Resolved(CanBeNull = true)]
         private LyricFontManager? lyricFontManager { get; set; }
 
-        [Resolved(CanBeNull = true)]
-        private IBindable<WorkingBeatmap>? workingBeatmap { get; set; }
-
         [Resolved]
         private BindableBeatDivisor beatDivisor { get; set; } = null!;
 
@@ -68,7 +64,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         private RoundedButton unsubdivideButton = null!;
         private RoundedButton insertPauseButton = null!;
         private Box background = null!;
-        private readonly LyricFontResolutionCache lyricFontResolution = new LyricFontResolutionCache();
+        private readonly EditorLyricFontResolutionCache lyricFontResolution = new EditorLyricFontResolutionCache();
         private string? resolvedLyricFont;
 
         public ActiveLineDetailPanel()
@@ -276,8 +272,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         {
             base.Update();
 
-            var metadata = editorBeatmap.BeatmapInfo.Metadata;
-            string? nextLyricFont = lyricFontResolution.ResolveForMap(lyricFontConfig, lyricFontManager, metadata.LyricFont, metadata.LyricFontFile, workingBeatmap?.Value);
+            string? nextLyricFont = lyricFontResolution.ResolveForEditor(lyricFontConfig, lyricFontManager);
 
             if (!string.Equals(nextLyricFont, resolvedLyricFont, System.StringComparison.Ordinal))
             {

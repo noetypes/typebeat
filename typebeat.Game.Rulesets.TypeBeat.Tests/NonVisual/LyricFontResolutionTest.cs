@@ -161,6 +161,32 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
                 "map fonts apply by default; the setting exists to opt out");
         }
 
+        [Test]
+        public void EditorFontCacheTracksTypingFontAndToggleIndependentlyOfGameplayMapFonts()
+        {
+            using var config = (TypeBeatRulesetConfigManager)new TypeBeatRuleset().CreateConfig(null);
+            using var fonts = new FontStore(new DummyRenderer(), null, 100);
+            var manager = new LyricFontManager(fonts, null);
+            var cache = new EditorLyricFontResolutionCache();
+            config.SetValue(TypeBeatRulesetSetting.LyricFont, LyricFontManager.OPEN_DYSLEXIC);
+            Assert.That(config.Get<bool>(TypeBeatRulesetSetting.UseTypingFontInEditor), Is.True);
+            Assert.That(cache.ResolveForEditor(config, manager), Is.EqualTo(LyricFontManager.OPEN_DYSLEXIC));
+
+            config.SetValue(TypeBeatRulesetSetting.UseTypingFontInEditor, false);
+            Assert.That(cache.ResolveForEditor(config, manager), Is.Null);
+            config.SetValue(TypeBeatRulesetSetting.UseMapFonts, false);
+            Assert.That(cache.ResolveForEditor(config, manager), Is.Null);
+            config.SetValue(TypeBeatRulesetSetting.UseTypingFontInEditor, true);
+            Assert.That(cache.ResolveForEditor(config, manager), Is.EqualTo(LyricFontManager.OPEN_DYSLEXIC));
+            config.SetValue(TypeBeatRulesetSetting.UseMapFonts, true);
+            Assert.That(cache.ResolveForEditor(config, manager), Is.EqualTo(LyricFontManager.OPEN_DYSLEXIC));
+
+            config.SetValue(TypeBeatRulesetSetting.LyricFont, TypeBeatRulesetConfigManager.LYRIC_FONT_DEFAULT);
+            Assert.That(cache.ResolveForEditor(config, manager), Is.Null);
+            config.SetValue(TypeBeatRulesetSetting.LyricFont, "typebeat-unavailable-editor-font");
+            Assert.That(cache.ResolveForEditor(config, manager), Is.Null, "an unavailable typing font falls back to the built-in editor font");
+        }
+
         // ---- the register-from-stream path (the bundled file) ----
 
         [Test]

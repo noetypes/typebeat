@@ -145,8 +145,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
         LyricFont,
 
         /// <summary>
+        /// Use the player's typing font for editor lyrics; otherwise keep the built-in editor font.
+        /// Map fonts never apply to editor lyric text. Enabled by default, and updates live.
+        /// </summary>
+        UseTypingFontInEditor,
+
+        /// <summary>
         /// Whether a map's own font choice (<c>[General] LyricFont</c>, backlog 291) is applied to
-        /// gameplay and editor lyric text. ON by default, in the spirit of osu's beatmap skin/hitsound toggles:
+        /// gameplay lyric text. ON by default, in the spirit of osu's beatmap skin/hitsound toggles:
         /// the mapper picked a look for their map and most players want to see it. When enabled,
         /// a usable map font takes priority over <see cref="LyricFont"/>; the player's font remains
         /// the fallback. Display only, so it never reaches the replay CONFIG frame.
@@ -545,6 +551,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
             SetDefault(TypeBeatRulesetSetting.LyricFontSize, UI.TypeBeatStyle.LYRIC_FONT_SIZE, 24.0f, 72.0f, 1.0f);
 
             SetDefault(TypeBeatRulesetSetting.LyricFont, LYRIC_FONT_DEFAULT);
+            SetDefault(TypeBeatRulesetSetting.UseTypingFontInEditor, true);
             SetDefault(TypeBeatRulesetSetting.UseMapFonts, true);
             SetDefault(TypeBeatRulesetSetting.UseSpaceErrorDot, true);
             SetDefault(TypeBeatRulesetSetting.ShowSyllableMarkers, true);
