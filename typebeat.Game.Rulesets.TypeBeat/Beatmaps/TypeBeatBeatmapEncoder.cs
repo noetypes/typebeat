@@ -60,7 +60,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 lyricFontFile: metadata.LyricFontFile,
                 editorTimingPoints: beatmap.ControlPointInfo.TimingPoints,
                 editorEffectPoints: beatmap.ControlPointInfo.EffectPoints,
-                beatDivisor: beatmap.BeatmapInfo.BeatDivisor);
+                beatDivisor: beatmap.BeatmapInfo.BeatDivisor,
+                source: metadata.Source);
 
             writer.Write(osu);
         }

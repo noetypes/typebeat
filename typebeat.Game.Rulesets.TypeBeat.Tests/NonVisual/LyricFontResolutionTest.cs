@@ -120,6 +120,39 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         }
 
         [Test]
+        public void ConfiguredResolutionUsesMapSettingAndSkipsMapRegistrationWhenDisabled()
+        {
+            var config = (TypeBeatRulesetConfigManager)new TypeBeatRuleset().CreateConfig(null);
+            var manager = new LyricFontManager(null, null);
+            int registerCalls = 0;
+
+            string? resolved = LyricFontResolution.ResolveConfigured(config, manager, map_family, () =>
+            {
+                registerCalls++;
+                return "MapFont-configured";
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resolved, Is.EqualTo("MapFont-configured"));
+                Assert.That(registerCalls, Is.EqualTo(1), "the map file is the first choice when map fonts are enabled");
+            });
+
+            config.GetBindable<bool>(TypeBeatRulesetSetting.UseMapFonts).Value = false;
+            resolved = LyricFontResolution.ResolveConfigured(config, manager, map_family, () =>
+            {
+                registerCalls++;
+                return "MapFont-configured";
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resolved, Is.Null, "with the player font left at its built-in default, a disabled map font resolves to built-in");
+                Assert.That(registerCalls, Is.EqualTo(1), "a disabled map font does not open its bundled file");
+            });
+        }
+
+        [Test]
         public void UseMapFontsShipsOn()
         {
             var config = (TypeBeatRulesetConfigManager)new TypeBeatRuleset().CreateConfig(null);

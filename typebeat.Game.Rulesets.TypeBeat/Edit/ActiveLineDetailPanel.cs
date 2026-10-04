@@ -3,13 +3,17 @@
 
 using System.Linq;
 using osu.Framework.Allocation;
+using osu.Framework.Bindables;
 using osu.Framework.Extensions.ObjectExtensions;
 using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
 using osu.Framework.Graphics.Shapes;
+using typebeat.Game.Beatmaps;
+using typebeat.Game.Graphics.Fonts;
 using typebeat.Game.Graphics.Sprites;
 using typebeat.Game.Graphics.UserInterfaceV2;
 using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
+using typebeat.Game.Rulesets.TypeBeat.Configuration;
 using typebeat.Game.Rulesets.TypeBeat.Objects;
 using typebeat.Game.Rulesets.TypeBeat.UI;
 using typebeat.Game.Screens.Edit;
@@ -31,6 +35,15 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         [Resolved]
         private EditorTimingSettings timingSettings { get; set; } = null!;
 
+        [Resolved(CanBeNull = true)]
+        private TypeBeatRulesetConfigManager? lyricFontConfig { get; set; }
+
+        [Resolved(CanBeNull = true)]
+        private LyricFontManager? lyricFontManager { get; set; }
+
+        [Resolved(CanBeNull = true)]
+        private IBindable<WorkingBeatmap>? workingBeatmap { get; set; }
+
         [Resolved]
         private BindableBeatDivisor beatDivisor { get; set; } = null!;
 
@@ -51,6 +64,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         private RoundedButton addWordButton = null!;
         private RoundedButton removeWordButton = null!;
         private Box background = null!;
+        private readonly LyricFontResolutionCache lyricFontResolution = new LyricFontResolutionCache();
+        private string? resolvedLyricFont;
 
         public ActiveLineDetailPanel()
         {
@@ -232,6 +247,16 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         protected override void Update()
         {
             base.Update();
+
+            var metadata = editorBeatmap.BeatmapInfo.Metadata;
+            string? nextLyricFont = lyricFontResolution.ResolveForMap(lyricFontConfig, lyricFontManager, metadata.LyricFont, metadata.LyricFontFile, workingBeatmap?.Value);
+
+            if (!string.Equals(nextLyricFont, resolvedLyricFont, System.StringComparison.Ordinal))
+            {
+                resolvedLyricFont = nextLyricFont;
+                header.FontFamily = resolvedLyricFont;
+                originalHeader.Font = TypeBeatStyle.Lyric(18, resolvedLyricFont);
+            }
 
             var line = state.ActiveLine.Value;
             bool live = line != null && editorBeatmap.HitObjects.Contains(line);

@@ -31,6 +31,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         private readonly List<(int Index, OsuSpriteText Sprite)> markers = new List<(int, OsuSpriteText)>();
 
         private string text = string.Empty;
+        private string? fontFamily;
         private int shimmerTick = int.MinValue;
 
         public FreestyleTextFlow(float fontSize, Color4 textColour)
@@ -40,6 +41,20 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
 
             AutoSizeAxes = Axes.Both;
             Direction = FillDirection.Horizontal;
+        }
+
+        /// <summary>Optional lyric family used for the preview; null preserves the fixed-width UI font.</summary>
+        public string? FontFamily
+        {
+            get => fontFamily;
+            set
+            {
+                if (string.Equals(fontFamily, value, System.StringComparison.Ordinal))
+                    return;
+
+                fontFamily = value;
+                rebuild();
+            }
         }
 
         public string Text
@@ -89,7 +104,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         {
             Anchor = Anchor.CentreLeft,
             Origin = Anchor.CentreLeft,
-            Font = TypeBeatStyle.Mono(fontSize),
+            Font = string.IsNullOrEmpty(fontFamily) ? TypeBeatStyle.Mono(fontSize) : TypeBeatStyle.Lyric(fontSize, fontFamily),
             Colour = colour,
             Text = content,
         };

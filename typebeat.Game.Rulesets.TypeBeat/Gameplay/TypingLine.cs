@@ -46,10 +46,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         public bool IsTypeable { get; }
 
         /// <summary>
-        /// FREESTYLE cell: any key on the typeable surface EXCEPT SPACE satisfies it, and the char
-        /// the player actually pressed lands in <see cref="TypedChar"/> and stays on screen.
-        /// Judgement is otherwise a completely normal typeable cell (same windows, points, combo,
-        /// completion), and a space is rejected exactly as a wrong key on any other cell is.
+        /// FREESTYLE cell: any pressed character, including space, satisfies it and is preserved
+        /// in <see cref="TypedChar"/>. It uses twice the ordinary judgement windows and the same
+        /// points, combo and completion rules as other typeable cells.
         /// </summary>
         public bool IsFreestyle { get; }
 
@@ -283,6 +282,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
         public int TypeableCount { get; }
 
+        public bool HasFreestyleCells { get; }
+
         /// <summary>
         /// The line's SYLLABLE groups (backlog 174): ordered, non-overlapping cell ranges, one per
         /// syllable of each whitespace token, with the time span each syllable is sung over. Built
@@ -487,6 +488,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             {
                 if (c.IsTypeable)
                     typeable++;
+                if (c.IsFreestyle)
+                    HasFreestyleCells = true;
             }
 
             TypeableCount = typeable;

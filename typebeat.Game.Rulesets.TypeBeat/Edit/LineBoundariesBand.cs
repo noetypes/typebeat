@@ -113,7 +113,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
             windowLength = Math.Max(1, visibleRange);
             windowStart = windowCentre - windowLength / 2;
 
-            var ordered = TypeBeatEditorOperations.OrderedLines(editorBeatmap);
+            var ordered = EditorLineSnapshot.For(editorBeatmap).Lines;
 
             if (signatureChanged(ordered))
                 rebuild(ordered);
@@ -239,7 +239,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
             {
                 // During a tap-timing pass the band keeps its time axis (it is the mapper's place in
                 // the song) but every line outside the pass is hidden outright rather than dimmed.
-                if (state.HiddenByTapScope(hitObject))
+                if (state.HiddenByTapScope(hitObject) || hitObject.Line.EndTime < parent.windowStart
+                    || hitObject.Line.StartTime > parent.windowStart + parent.windowLength)
                 {
                     Alpha = 0;
                     return;
@@ -286,7 +287,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
 
             public void UpdateLayout(LineBoundariesBand parent)
             {
-                Alpha = state.HiddenByTapScope(hitObject) ? 0 : 1;
+                double time = hitObject.Line.StartTime;
+                Alpha = state.HiddenByTapScope(hitObject) || time < parent.windowStart || time > parent.windowStart + parent.windowLength ? 0 : 1;
 
                 if (Alpha > 0)
                     X = parent.PositionOf(hitObject.Line.StartTime);
@@ -331,8 +333,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
                     return;
                 }
 
-                Alpha = 1;
-                X = parent.PositionOf(hitObject.Line.Units[index].StartTime);
+                double time = hitObject.Line.Units[index].StartTime;
+                Alpha = time >= parent.windowStart && time <= parent.windowStart + parent.windowLength ? 1 : 0;
+
+                if (Alpha > 0)
+                    X = parent.PositionOf(time);
             }
         }
     }

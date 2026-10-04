@@ -1164,7 +1164,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                 //
                 // (Gated on there being no bound gesture on this press, so binding one onto a Space
                 // chord is not swallowed by the skip fall-through.)
-                if (engine.FletcherEnabled && gesture == null && e.Key == Key.Space && !engine.SongIsOnTheCaretsLine && engine.ActiveLineUntouched)
+                // A freestyle slot can legitimately open before the song reaches this line.
+                // Within its judgement window, Space is the slot's input rather than a skip.
+                if (engine.FletcherEnabled && gesture == null && e.Key == Key.Space && !engine.SongIsOnTheCaretsLine && engine.ActiveLineUntouched
+                    && !engine.FreestyleInputWindowOpen(time))
                     return false;
 
                 if (gesture == TypeBeatAction.EraseWord || (gesture == null && e.Key == Key.BackSpace))

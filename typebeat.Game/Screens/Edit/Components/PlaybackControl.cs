@@ -5,10 +5,7 @@ using System.Linq;
 using osuTK;
 using osuTK.Graphics;
 using osu.Framework.Allocation;
-using osu.Framework.Audio;
-using osu.Framework.Bindables;
 using osu.Framework.Extensions.IEnumerableExtensions;
-using osu.Framework.Extensions.ObjectExtensions;
 using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
 using osu.Framework.Graphics.Cursor;
@@ -32,8 +29,6 @@ namespace typebeat.Game.Screens.Edit.Components
 
         [Resolved]
         private EditorClock editorClock { get; set; } = null!;
-
-        private readonly BindableNumber<double> tempoAdjustment = new BindableDouble(1);
 
         [BackgroundDependencyLoader]
         private void load(OverlayColourProvider colourProvider)
@@ -67,7 +62,7 @@ namespace typebeat.Game.Screens.Edit.Components
                         },
                         new PlaybackTabControl
                         {
-                            Current = tempoAdjustment,
+                            Current = editorClock.PlaybackRate,
                             RelativeSizeAxes = Axes.X,
                             Height = 16,
                         },
@@ -75,15 +70,6 @@ namespace typebeat.Game.Screens.Edit.Components
                 }
             };
 
-            editorClock.AudioAdjustments.AddAdjustment(AdjustableProperty.Tempo, tempoAdjustment);
-        }
-
-        protected override void Dispose(bool isDisposing)
-        {
-            if (editorClock.IsNotNull())
-                editorClock.AudioAdjustments.RemoveAdjustment(AdjustableProperty.Tempo, tempoAdjustment);
-
-            base.Dispose(isDisposing);
         }
 
         protected override bool OnKeyDown(KeyDownEvent e)

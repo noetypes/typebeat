@@ -81,6 +81,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         protected override void Update()
         {
             base.Update();
+            // The engine's WPM clock includes rate mods but excludes separate playback
+            // adjustments. Editor Test Play therefore already reports WPM normalized to its
+            // selected editor tempo; dividing by that tempo here would normalize it twice.
             if (playfield != null)
                 Text = playfield.Engine.LiveRollingWpm.ToString("0");
         }
@@ -155,6 +158,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
 
         private double? starRating;
         private double difficultCharacters;
+        private double playedDurationSeconds;
         private IReadOnlyList<Mod>? mods;
         private PerformancePoints.NoteCounts lastCounts = new PerformancePoints.NoteCounts(-1, -1, -1);
         private int lastMaxCombo = -1;
@@ -171,6 +175,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             difficultCharacters = playableBeatmap == null
                 ? 0
                 : PerformancePoints.DifficultCharactersFor(playableBeatmap.HitObjects.OfType<TypeBeatHitObject>().Select(h => h.Line), gameplayMods);
+            playedDurationSeconds = playableBeatmap == null
+                ? 0
+                : PerformancePoints.PlayedDurationFor(playableBeatmap.HitObjects.OfType<TypeBeatHitObject>().Select(h => h.Line), gameplayMods);
             starRating = TypeBeatHudOverlay.StarRatingFor(playableBeatmap, gameplayMods);
             Text = PerformancePointsDisplay.Format(starRating == null ? null : 0d);
         }
@@ -190,7 +197,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
 
             lastCounts = counts;
             lastMaxCombo = maxCombo;
-            Text = PerformancePointsDisplay.Format(PerformancePoints.ForPlay(stars, counts, scoreProcessor.Accuracy.Value, maxCombo, mods));
+            Text = PerformancePointsDisplay.Format(PerformancePoints.ForPlay(stars, counts, scoreProcessor.Accuracy.Value, maxCombo, mods, playedDurationSeconds));
         }
     }
 }
