@@ -111,7 +111,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 return new Result(line, null, null);
 
             if (isJapanese(language))
-                pieces = joinJapaneseWords(line, pieces);
+                pieces = joinJapaneseWords(line, splitJapaneseOriginalSpaces(line, pieces));
 
             var rawCluster = new List<int>();
             int nextBlock = 0;
@@ -224,21 +224,100 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             return pieces;
         }
 
-        private static bool isJapanese(string? language)
-            => string.Equals(language, "japanese", StringComparison.OrdinalIgnoreCase)
-               || string.Equals(language, "ja", StringComparison.OrdinalIgnoreCase);
+        // A word original may contain intentional spaces (the word-script editor allows this).
+        // Split its display tokens without changing the timing ramp or losing authored cuts.
+        private static List<Piece> splitJapaneseOriginalSpaces(LyricLine line, List<Piece> pieces)
+        {
+            string[] sources = pieces.Select(p => p.Unit.Original ?? p.Text).ToArray();
+            string caption = PolyglotText.ToNfc(line.Original);
+            static string withoutSpaces(string text) => new string(PolyglotText.ToNfc(text).Where(c => !char.IsWhiteSpace(c)).ToArray());
+            if (caption.Length > 0 && withoutSpaces(caption) == string.Concat(sources.Select(withoutSpaces)))
+            {
+                // A matching line original also records spaces inside a timed unit. Its whitespace
+                // is authoritative even if the word original stores the same characters joined.
+                int at = 0;
+                for (int i = 0; i < sources.Length; i++)
+                {
+                    int start = at;
+                    int remaining = withoutSpaces(sources[i]).Length;
+                    while (at < caption.Length && remaining > 0)
+                    {
+                        if (!char.IsWhiteSpace(caption[at]))
+                            remaining--;
+                        at++;
+                    }
+                    sources[i] = caption.Substring(start, at - start);
+                }
+            }
+
+            var result = new List<Piece>();
+            for (int p = 0; p < pieces.Count; p++)
+            {
+                Piece piece = pieces[p];
+                string[] originals = LyricOriginals.CollapseWhitespace(sources[p]).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (originals.Length < 2)
+                {
+                    result.Add(piece);
+                    continue;
+                }
+
+                string[] words = originals.Select(w => PolyglotText.CellText(w)).ToArray();
+                int[] counts = words.Select(w => w.Count(Typeability.IsPolyglotTypeCell)).ToArray();
+                double[] targets = TypingLine.CellTargetsFor(piece.Unit, counts.Sum(), Typeability.IsPolyglotTypeCell);
+                IReadOnlyList<int> cuts = SyllableSegments.SplitsFor(piece.Unit);
+                int offset = 0;
+                int before = 0;
+                for (int i = 0; i < words.Length; i++)
+                {
+                    int after = before + counts[i];
+                    double start = i == 0 ? piece.Unit.StartTime : before < targets.Length ? targets[before] : piece.Unit.EndTime;
+                    double end = i + 1 == words.Length ? piece.Unit.EndTime : after < targets.Length ? targets[after] : piece.Unit.EndTime;
+                    var boundaries = new List<double>();
+                    var splits = new List<int>();
+                    for (int j = 0; j < cuts.Count && j < piece.Unit.SyllableBoundaries.Count; j++)
+                    {
+                        double time = piece.Unit.SyllableBoundaries[j];
+                        if (cuts[j] > offset && cuts[j] < offset + words[i].Length && time > start && time < end)
+                        {
+                            boundaries.Add(time);
+                            splits.Add(cuts[j] - offset);
+                        }
+                    }
+                    result.Add(new Piece
+                    {
+                        Unit = new TimedUnit
+                        {
+                            Text = words[i],
+                            Original = (i > 0 || hasOriginalSpace(sources[p], trailing: false) ? " " : string.Empty) + originals[i]
+                                       + (i + 1 == words.Length && hasOriginalSpace(sources[p], trailing: true) ? " " : string.Empty),
+                            StartTime = start, EndTime = end, Source = piece.Unit.Source, Confidence = piece.Unit.Confidence,
+                            SyllableBoundaries = boundaries, SyllableSplits = splits,
+                        },
+                        Natural = boundaries.Count == 0 ? piece.Natural ?? new NaturalSplit(Array.Empty<int>()) : null,
+                        Cluster = piece.Cluster.Skip(offset).Take(words[i].Length).ToArray(),
+                    });
+                    offset += words[i].Length;
+                    before = after;
+                }
+            }
+            return result;
+        }
+
+        private static bool isJapanese(string? language) => JapaneseReading.IsJapanese(language);
 
         /// <summary>
         /// The romanised words of Japanese do not imply typed spaces in the original script.
         /// Only whitespace present between the matching original pieces keeps a space cell.
-        /// If the originals cannot be matched to the line, preserve the existing word breaks.
+        /// Without a matching line original, adjacent Japanese words still join unless their
+        /// own originals record whitespace at the seam. Mixed Latin words keep their breaks.
         /// </summary>
         private static List<Piece> joinJapaneseWords(LyricLine line, List<Piece> pieces)
         {
-            bool[]? spaces = originalSpaces(line.Original, pieces);
-
-            if (spaces == null)
-                return pieces;
+            bool[] spaces = originalSpaces(line.Original, pieces) ?? Enumerable.Range(0, pieces.Count - 1)
+                .Select(i => hasOriginalSpace(pieces[i].Unit.Original, trailing: true)
+                             || hasOriginalSpace(pieces[i + 1].Unit.Original, trailing: false)
+                             || !hasJapaneseEdge(pieces[i].Text, trailing: true)
+                             || !hasJapaneseEdge(pieces[i + 1].Text, trailing: false)).ToArray();
 
             var joined = new List<Piece>();
             int from = 0;
@@ -256,12 +335,28 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             return joined;
         }
 
+        private static bool hasOriginalSpace(string? original, bool trailing)
+            => !string.IsNullOrEmpty(original) && char.IsWhiteSpace(trailing ? original[^1] : original[0]);
+
+        private static bool hasJapaneseEdge(string text, bool trailing)
+        {
+            string kana = JapaneseRomaji.Hiragana(text);
+            for (int i = trailing ? kana.Length - 1 : 0; i >= 0 && i < kana.Length; i += trailing ? -1 : 1)
+            {
+                char c = kana[i];
+                if (char.IsPunctuation(c) || char.IsWhiteSpace(c))
+                    continue;
+                return Kawazu.Utilities.IsKanji(c) || Kawazu.Utilities.IsKana(c) || c is 'ー' or '々' or '〆';
+            }
+            return false;
+        }
+
         private static bool[]? originalSpaces(string? original, IReadOnlyList<Piece> pieces)
         {
             if (original == null)
                 return null;
 
-            string source = LyricOriginals.CollapseWhitespace(original);
+            string source = LyricOriginals.CollapseWhitespace(PolyglotText.ToNfc(original));
             var spaces = new bool[Math.Max(0, pieces.Count - 1)];
             int at = 0;
 
@@ -276,7 +371,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                     }
                 }
 
-                string text = pieces[i].Unit.Original ?? pieces[i].Text;
+                string text = LyricOriginals.CollapseWhitespace(PolyglotText.ToNfc(pieces[i].Unit.Original ?? pieces[i].Text));
 
                 if (!source.AsSpan(at).StartsWith(text.AsSpan(), StringComparison.Ordinal))
                     return null;

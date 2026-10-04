@@ -185,6 +185,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 foreach (JapaneseElement element in getDivisions(source).SelectMany(d => d))
                 {
                     string surface = element.Element;
+                    // MeCab omits ASCII whitespace from its elements. Keep the original offsets
+                    // rather than rejecting every reading in an otherwise valid spaced line.
+                    while (at < source.Length && char.IsWhiteSpace(source[at])
+                           && !source.AsSpan(at).StartsWith(surface.AsSpan(), StringComparison.Ordinal))
+                        at++;
                     if (surface.Length == 0 || at + surface.Length > source.Length
                         || !source.AsSpan(at, surface.Length).SequenceEqual(surface.AsSpan()))
                         return Array.Empty<Reading>();
@@ -197,6 +202,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                     at += surface.Length;
                 }
 
+                while (at < source.Length && char.IsWhiteSpace(source[at]))
+                    at++;
                 return at == source.Length ? result : Array.Empty<Reading>();
             }
             catch (Exception e)

@@ -76,6 +76,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         [TestCase("こんにちは", "konnichiha")]
         [TestCase("食べる", "taberu")]
         [TestCase("学校", "gakkou")]
+        [TestCase("真っ赤", "makka")]
+        [TestCase("月とカレー", "tukitokare-")]
+        [TestCase("月 と テンシ", "tuki to tennshi")]
+        [TestCase("月 と テンシ", "tsuki to tensi")]
+        [TestCase("月　と　テンシ", "tsuki to tenshi")]
         [TestCase("コーヒー", "ko-hi-")]
         [TestCase("ｶﾞｯｺｳ", "gakkou")]
         [TestCase("ｷｬ", "kya")]
@@ -93,6 +98,55 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
                 Assert.That(engine.Mistypes, Is.Zero);
                 Assert.That(engine.JapanesePending, Is.Empty);
             });
+        }
+
+        [TestCase("月 と テンシ", "tuki to tennshi")]
+        [TestCase("月　と　テンシ", "tsuki to tensi")]
+        [TestCase("月 と ｷｬ", "tuki to kya")]
+        public void KanaStillAcceptsRomajiInASpacedMixedScriptLine(string original, string input)
+        {
+            var words = LyricOriginals.CollapseWhitespace(original).Split(' ');
+            var beatmap = new LyricBeatmap
+            {
+                Metadata = new LyricBeatmapMetadata { Artist = "A", Title = "T", AudioFileName = "a.mp3", FolderPath = string.Empty },
+                Granularity = TimingGranularity.Word,
+                Lines = new[]
+                {
+                    new LyricLine
+                    {
+                        RawText = string.Join(' ', words.Select(w => LyricOriginals.RomaniseWord(w, "japanese").Text)),
+                        Original = original, StartTime = 0, EndTime = 5000, SingEndTime = 3000,
+                        Units = words.Select(w => new TimedUnit { Text = LyricOriginals.RomaniseWord(w, "japanese").Text, Original = w, StartTime = 1000, EndTime = 3000 }).ToArray(),
+                    },
+                },
+            };
+            var engine = new TypingEngine(beatmap, polyglot: true, polyglotLanguage: "japanese");
+            engine.Update(1000);
+            foreach (char c in input)
+                Assert.That(engine.ProcessKey(c, 1200), Is.True, c.ToString());
+            Assert.Multiple(() =>
+            {
+                Assert.That(engine.Lines[0].DisplayText, Is.EqualTo(string.Join(' ', words)));
+                Assert.That(engine.Lines[0].Cells.All(c => c.State == CellState.Correct), Is.True);
+                Assert.That(engine.Mistypes, Is.Zero);
+                Assert.That(engine.JapanesePending, Is.Empty);
+            });
+        }
+
+        [TestCase("月 と テンシ")]
+        [TestCase("月　と　ｷｬ")]
+        public void EveryKanaCellHasAnInputReadingEvenWhenTheDictionarySkipsWhitespace(string original)
+        {
+            var plan = JapaneseInputPlan.Create(original);
+            for (int at = 0; at < original.Length; at++)
+            {
+                char c = original[at];
+                if (char.IsWhiteSpace(c))
+                    Assert.That(plan.At(at), Is.Null);
+                else
+                    Assert.That(plan.At(at), Is.Not.Null, $"Missing reading at {at}: {c}");
+            }
+            Assert.That(plan.Groups.First().Reading, Is.EqualTo("つき"));
         }
 
         [Test]

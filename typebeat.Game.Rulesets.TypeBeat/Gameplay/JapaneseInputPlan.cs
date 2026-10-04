@@ -28,11 +28,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             for (int at = 0; at < groups.Count; at++)
             {
                 Group group = groups[at];
-                // A shared n at a word boundary (本に: honni / honnni) needs both readings in
-                // the grammar at once. Keep their ruby spans separate while input disambiguates.
+                // Shared n and doubled consonants can cross dictionary word boundaries (本に,
+                // 真っ赤). Keep ruby spans separate while the grammar reads both parts at once.
                 while (at + 1 < groups.Count && group.EndCellExclusive == groups[at + 1].StartCell
-                       && group.Reading.EndsWith("ん", StringComparison.Ordinal)
-                       && "なにぬねの".Contains(groups[at + 1].Reading[0]))
+                       && (group.Reading.EndsWith('っ')
+                           || group.Reading.EndsWith('ん') && "なにぬねの".Contains(groups[at + 1].Reading[0])))
                 {
                     var next = groups[++at];
                     group = new Group(group.StartCell, next.EndCellExclusive, group.Reading + next.Reading, false);
@@ -106,10 +106,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 string reading = JapaneseRomaji.Hiragana(part.Kana);
                 string normal = normalise(surface, out var starts, out var ends);
                 if (!surface.Any(Utilities.IsKanji))
-                {
-                    addKana(part.Start, surface);
                     continue;
-                }
 
                 // Okurigana retains its own cells. Only the kanji run wears ruby, and only that
                 // run must finish a dictionary reading before it can be converted.
@@ -122,10 +119,22 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                     suffix++;
                 int originalPrefix = prefix == 0 ? 0 : ends[prefix - 1];
                 int originalSuffix = suffix == 0 ? surface.Length : starts[normal.Length - suffix];
-                addKana(part.Start, surface[..originalPrefix]);
-                groups.Add(new Group(part.Start + originalPrefix, part.Start + originalSuffix, reading.Substring(prefix, reading.Length - prefix - suffix), true));
-                addKana(part.Start + originalSuffix, surface[originalSuffix..]);
+                string coreReading = reading.Substring(prefix, reading.Length - prefix - suffix);
+                if (coreReading.Length > 0 && originalSuffix > originalPrefix)
+                    groups.Add(new Group(part.Start + originalPrefix, part.Start + originalSuffix, coreReading, true));
             }
+
+            // Kana supplies its own reading. Build its grammar directly from the displayed text,
+            // independently of dictionary success and word segmentation. This also keeps small
+            // kana and doubled consonants together when authored units divide a kana run.
+            int freeStart = 0;
+            foreach (Group group in groups.OrderBy(g => g.StartCell).ToArray())
+            {
+                addKana(freeStart, text.Substring(freeStart, group.StartCell - freeStart));
+                freeStart = group.EndCellExclusive;
+            }
+            addKana(freeStart, text[freeStart..]);
+            groups.Sort((a, b) => a.StartCell.CompareTo(b.StartCell));
             return new JapaneseInputPlan(text, groups);
 
             void addKana(int start, string source)

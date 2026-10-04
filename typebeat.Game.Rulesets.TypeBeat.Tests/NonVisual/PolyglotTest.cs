@@ -263,6 +263,88 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             });
         }
 
+        [TestCase(2000, false)]
+        [TestCase(2500, true)]
+        public void JapaneseWordOriginalsNeedNoLineOriginalToRemoveRomanisedSpaces(double nextStart, bool pause)
+        {
+            var l = line(unit("tsuki", 1000, 2000, "月"), unit("to", nextStart, 3000, "と"));
+            var cells = polyglot(l, language: "japanese");
+            Assert.Multiple(() =>
+            {
+                Assert.That(display(cells), Is.EqualTo("月と"));
+                Assert.That(cells.Cells.Select(c => c.TargetTime), Is.EqualTo(new[] { 1000.0, nextStart }));
+                Assert.That(cells.Source.Units.Single().Pauses.Count, Is.EqualTo(pause ? 1 : 0));
+                Assert.That(cells.Source.Units.Single().SyllableSplits, Is.EqualTo(pause ? Array.Empty<int>() : new[] { 1 }));
+            });
+        }
+
+        [TestCase("月 と", "月", "と")]
+        [TestCase("月　と", "月", "と")]
+        [TestCase(null, "月 ", "と")]
+        [TestCase(null, "月", " と")]
+        public void ExplicitJapaneseOriginalSpacesStayTypeable(string? original, string first, string second)
+        {
+            var units = new[] { unit("tsuki", 1000, 2000, first), unit("to", 2500, 3000, second) };
+            var l = new LyricLine { RawText = "tsuki to", Original = original, StartTime = 0, EndTime = 6000, SingEndTime = 3000, Units = units };
+            var cells = polyglot(l, language: "japanese");
+            Assert.Multiple(() =>
+            {
+                Assert.That(display(cells), Is.EqualTo("月 と"));
+                Assert.That(cells.Words.Count, Is.EqualTo(2));
+                Assert.That(cells.Cells.Select(c => c.TargetTime), Is.EqualTo(new[] { 1000.0, 2000.0, 2500.0 }));
+            });
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void IntentionalSpacesInsideAJapaneseWordOriginalKeepTheirTimingAndCuts(bool subdivided, bool fromLine)
+        {
+            var l = new LyricLine
+            {
+                RawText = "tsukitenshi", Original = fromLine ? "つき テンシ" : null,
+                StartTime = 0, EndTime = 6000, SingEndTime = 3000,
+                Units = new[] { unit("tsukitenshi", 1000, 3000, fromLine ? "つきテンシ" : "つき テンシ",
+                    subdivided ? new[] { 2000.0 } : null, subdivided ? new[] { 5 } : null) },
+            };
+            var cells = polyglot(l, language: "japanese");
+            double seam = subdivided ? 2000 : 1800;
+            Assert.Multiple(() =>
+            {
+                Assert.That(display(cells), Is.EqualTo("つき テンシ"));
+                Assert.That(cells.Words.Select(w => (w.StartTime, w.EndTime)), Is.EqualTo(new[] { (1000.0, seam), (seam, 3000.0) }));
+                Assert.That(cells.Cells.Select(c => c.TargetTime), Is.EqualTo(new[] { 1000.0, (1000 + seam) / 2, seam, seam, seam + (3000 - seam) / 3, seam + 2 * (3000 - seam) / 3 }).Within(1e-9));
+            });
+        }
+
+        [Test]
+        public void OriginalSpacesInsideAUnitPreserveSubdivisionsOnBothSides()
+        {
+            var l = new LyricLine
+            {
+                RawText = "tsukitenshi", Original = "つき テンシ", StartTime = 0, EndTime = 6000, SingEndTime = 3000,
+                Units = new[] { unit("tsukitenshi", 1000, 3000, "つきテンシ", new[] { 1400.0, 2000.0, 2600.0 }, new[] { 3, 5, 8 }) },
+            };
+            var cells = polyglot(l, language: "japanese");
+            Assert.Multiple(() =>
+            {
+                Assert.That(display(cells), Is.EqualTo("つき テンシ"));
+                Assert.That(cells.Source.Units[0].SyllableBoundaries, Is.EqualTo(new[] { 1400.0 }));
+                Assert.That(cells.Source.Units[0].SyllableSplits, Is.EqualTo(new[] { 1 }));
+                Assert.That(cells.Source.Units[1].SyllableBoundaries, Is.EqualTo(new[] { 2600.0 }));
+                Assert.That(cells.Source.Units[1].SyllableSplits, Is.EqualTo(new[] { 2 }));
+                Assert.That(cells.Cells.Select(c => c.TargetTime), Is.EqualTo(new[] { 1000.0, 1400.0, 2000.0, 2000.0, 2300.0, 2600.0 }));
+            });
+        }
+
+        [Test]
+        public void MixedJapaneseAndLatinWordsKeepTheirWordBreaksWithoutALineOriginal()
+        {
+            var l = line(unit("tsuki", 1000, 2000, "月"), unit("hello", 2000, 2500), unit("to", 2500, 3000, "と"));
+            Assert.That(display(polyglot(l, language: "japanese")), Is.EqualTo("月 hello と"));
+        }
+
         [Test]
         public void ACyrillicCutLandsOnTheLetterItOpens()
         {

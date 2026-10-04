@@ -32,6 +32,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         private TypingEngine engine => playfield.Engine;
         private LyricStage stage => Player.ChildrenOfType<LyricStage>().Single();
         private LyricLineDisplay display => stage.DisplayAt(0)!;
+        private LyricLine? testLine;
         private EmulatedTextInput os => ((KeycapManualInputManager)InputManager).TextInput;
         private TypeBeatRulesetConfigManager config => (TypeBeatRulesetConfigManager)RulesetConfigs.GetConfigFor(new TypeBeatRuleset())!;
         private List<TypeBeatReplayFrame> frames => Player.GameplayState.Score.Replay.Frames.OfType<TypeBeatReplayFrame>().ToList();
@@ -39,6 +40,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
 
         public override void SetUpSteps()
         {
+            AddStep("reset lyric fixture", () => testLine = null);
             AddStep("word skipping off", () => config.SetValue(TypeBeatRulesetSetting.SpaceSkipsWord, false));
             AddStep("manual newlines off", () => config.SetValue(TypeBeatRulesetSetting.ManualNewlines, false));
             base.SetUpSteps();
@@ -49,7 +51,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             var beatmap = new Beatmap { HitObjects = new List<Rulesets.Objects.HitObject>() };
             beatmap.BeatmapInfo.Ruleset = ruleset;
             beatmap.BeatmapInfo.Metadata.Language = BeatmapLanguage.Japanese;
-            var line = new LyricLine
+            var line = testLine ?? new LyricLine
             {
                 RawText = "tsukitotenshi", Original = "月と天使",
                 StartTime = 0, EndTime = 600000, SingEndTime = 300000,
@@ -79,6 +81,36 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                 frames.Single(f => f.IsConfigExtended).JapaneseRomajiInput
                 && new string(frames.Where(f => !f.IsConfig && !f.IsConfigExtended).Select(f => f.Character).ToArray()) == moon + "to" + angel);
             AddAssert("legacy replay reproduces the play", reDerivedMatchesLive);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TestKanaAndWordSeamsThroughGameplayAndReplay(bool originalSpaces)
+        {
+            AddStep("use mixed kanji and kana word originals", () => testLine = new LyricLine
+            {
+                RawText = "tsuki to tenshi", Original = originalSpaces ? "月 と テンシ" : null,
+                StartTime = 0, EndTime = 600000, SingEndTime = 300000,
+                Units = new[]
+                {
+                    new TimedUnit { Text = "tsuki", Original = "月", StartTime = 0, EndTime = 100000 },
+                    new TimedUnit { Text = "to", Original = "と", StartTime = 100000, EndTime = 200000 },
+                    new TimedUnit { Text = "tenshi", Original = "テンシ", StartTime = 200000, EndTime = 300000 },
+                },
+            });
+            load();
+            AddAssert("only original spaces are typeable", () => engine.Lines[0].DisplayText == (originalSpaces ? "月 と テンシ" : "月とテンシ"));
+            AddAssert("scoring objects use the same cell stream", () => Player.GameplayState.Beatmap.HitObjects.OfType<TypeBeatHitObject>().Single().NestedHitObjects.OfType<TypeBeatCharObject>().Count()
+                == engine.Lines[0].Cells.Count(c => c.IsTypeable));
+            press("tuki");
+            if (originalSpaces)
+                AddStep("type the first original space", () => InputManager.Key(Key.Space));
+            press("to");
+            if (originalSpaces)
+                AddStep("type the second original space", () => InputManager.Key(Key.Space));
+            press("tennshi");
+            AddAssert("kanji, hiragana and katakana are correct", () => engine.Lines[0].Cells.All(c => c.State == CellState.Correct) && engine.Mistypes == 0);
+            AddAssert("spaced or joined play replays exactly", reDerivedMatchesLive);
         }
 
         [Test]
