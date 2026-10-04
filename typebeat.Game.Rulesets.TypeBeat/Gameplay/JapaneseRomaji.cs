@@ -76,9 +76,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             char c = kana[at];
             if (c == 'ん')
             {
-                yield return (1, "nn");
-                yield return (1, "xn");
-                yield return (1, "n'");
+                foreach (string spelling in spellings["ん"])
+                    yield return (1, spelling);
                 string next = at + 1 < kana.Length ? kana[(at + 1)..] : following;
                 // At a word/line boundary n is complete but can still become nn. The engine
                 // keeps that ambiguity pending until the next key or an explicit confirmation.
@@ -91,15 +90,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
             if (c == 'っ')
             {
-                yield return (1, "xtu");
-                yield return (1, "ltu");
-                yield return (1, "xtsu");
-                yield return (1, "ltsu");
+                foreach (string spelling in spellings["っ"])
+                    yield return (1, spelling);
                 if (at + 1 < kana.Length)
                 {
                     foreach (var (length, spelling) in edges(kana, at + 1, following))
                     {
-                        if (isConsonant(spelling[0]) && spelling[0] != 'n')
+                        if (isGeminateConsonant(spelling[0]) && spelling[0] != 'n')
                             yield return (1 + length, spelling[0] + spelling);
                         if (spelling.StartsWith("ch", StringComparison.Ordinal))
                             yield return (1 + length, "t" + spelling);
@@ -144,7 +141,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                         && (at + 2 == text.Length || isConsonant(text[at + 2]))) ? 2 : 1;
                     continue;
                 }
-                if (at + 1 < text.Length && isConsonant(text[at]) && text[at] != 'n'
+                if (at + 1 < text.Length && isGeminateConsonant(text[at]) && text[at] != 'n'
                     && (text[at] == text[at + 1] || text.AsSpan(at).StartsWith("tch")))
                 {
                     kana.Append('っ');
@@ -174,6 +171,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         }
 
         private static bool isConsonant(char c) => c is >= 'a' and <= 'z' && !"aiueoy".Contains(c);
+        private static bool isGeminateConsonant(char c) => isConsonant(c) || c == 'y';
 
         private static Dictionary<string, string[]> createSpellings()
         {
@@ -184,21 +182,25 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 + "ま:ma み:mi む:mu め:me も:mo や:ya ゆ:yu よ:yo ら:ra り:ri る:ru れ:re ろ:ro わ:wa を:wo "
                 + "が:ga ぎ:gi ぐ:gu げ:ge ご:go ざ:za じ:zi,ji ず:zu ぜ:ze ぞ:zo だ:da ぢ:di づ:du で:de ど:do "
                 + "ば:ba び:bi ぶ:bu べ:be ぼ:bo ぱ:pa ぴ:pi ぷ:pu ぺ:pe ぽ:po ゔ:vu ゐ:wyi ゑ:wye ー:- "
-                + "ぁ:xa,la ぃ:xi,li,xyi,lyi ぅ:xu,lu ぇ:xe,le,xye,lye ぉ:xo,lo ゃ:xya,lya ゅ:xyu,lyu ょ:xyo,lyo ゎ:xwa,lwa ゕ:xka,lka ゖ:xke,lke");
+                + "ぁ:xa,la ぃ:xi,li,xyi,lyi ぅ:xu,lu ぇ:xe,le,xye,lye ぉ:xo,lo ゃ:xya,lya ゅ:xyu,lyu ょ:xyo,lyo ゎ:xwa,lwa ゕ:xka,lka ゖ:xke,lke "
+                + "ん:nn,xn,n' っ:xtu,ltu,xtsu,ltsu");
             foreach (var (kana, head) in new[] { ("き", "k"), ("ぎ", "g"), ("に", "n"), ("ひ", "h"), ("び", "b"), ("ぴ", "p"), ("み", "m"), ("り", "r") })
             {
-                foreach (var (small, vowel) in new[] { ("ゃ", "a"), ("ゅ", "u"), ("ょ", "o"), ("ぇ", "e") })
+                foreach (var (small, vowel) in new[] { ("ゃ", "a"), ("ぃ", "i"), ("ゅ", "u"), ("ょ", "o"), ("ぇ", "e") })
                     result[kana + small] = new[] { head + "y" + vowel };
             }
-            add("しゃ:sya,sha しゅ:syu,shu しぇ:sye,she しょ:syo,sho "
-                + "じゃ:zya,jya,ja じゅ:zyu,jyu,ju じぇ:zye,jye,je じょ:zyo,jyo,jo "
-                + "ちゃ:tya,cya,cha ちゅ:tyu,cyu,chu ちぇ:tye,cye,che ちょ:tyo,cyo,cho ぢゃ:dya ぢゅ:dyu ぢょ:dyo "
+            add("しゃ:sya,sha しぃ:syi しゅ:syu,shu しぇ:sye,she しょ:syo,sho "
+                + "じゃ:zya,jya,ja じぃ:zyi,jyi じゅ:zyu,jyu,ju じぇ:zye,jye,je じょ:zyo,jyo,jo "
+                + "ちゃ:tya,cya,cha ちぃ:tyi,cyi ちゅ:tyu,cyu,chu ちぇ:tye,cye,che ちょ:tyo,cyo,cho ぢゃ:dya ぢぃ:dyi ぢゅ:dyu ぢぇ:dye ぢょ:dyo "
                 + "いぇ:ye うぁ:wha うぃ:wi,whi うぇ:we,whe うぉ:who "
-                + "ふぁ:fa ふぃ:fi,fyi ふぇ:fe,fye ふぉ:fo ふゃ:fya ふゅ:fyu ふょ:fyo "
+                + "ふぁ:fa,hwa ふぃ:fi,fyi,hwi ふぇ:fe,fye,hwe ふぉ:fo,hwo ふゃ:fya ふゅ:fyu,hwyu ふょ:fyo "
                 + "ゔぁ:va ゔぃ:vi,vyi ゔぇ:ve,vye ゔぉ:vo ゔゃ:vya ゔゅ:vyu ゔょ:vyo "
-                + "つぁ:tsa つぃ:tsi つぇ:tse つぉ:tso てぃ:thi てゅ:thu でぃ:dhi でゅ:dhu とぅ:twu どぅ:dwu "
-                + "くぁ:kwa,qa,qwa くぃ:kwi,qi,qwi,qyi くぇ:kwe,qe,qwe,qye くぉ:kwo,qo,qwo くゃ:qya くゅ:qyu くょ:qyo "
-                + "ぐぁ:gwa ぐぃ:gwi ぐぇ:gwe ぐぉ:gwo すぃ:swi ずぃ:zwi");
+                + "つぁ:tsa つぃ:tsi つぇ:tse つぉ:tso てゃ:tha てぃ:thi,t'i てゅ:thu,t'yu てぇ:the てょ:tho "
+                + "でゃ:dha でぃ:dhi,d'i でゅ:dhu,d'yu でぇ:dhe でょ:dho "
+                + "とぁ:twa とぃ:twi とぅ:twu,t'u とぇ:twe とぉ:two どぁ:dwa どぃ:dwi どぅ:dwu,d'u どぇ:dwe どぉ:dwo "
+                + "くぁ:kwa,qa,qwa くぃ:kwi,qi,qwi,qyi くぅ:kwu くぇ:kwe,qe,qwe,qye くぉ:kwo,qo,qwo くゃ:qya くゅ:qyu くょ:qyo "
+                + "ぐぁ:gwa ぐぃ:gwi ぐぅ:gwu ぐぇ:gwe ぐぉ:gwo すぁ:swa すぃ:swi すぅ:swu すぇ:swe すぉ:swo "
+                + "ずぁ:zwa ずぃ:zwi ずぅ:zwu ずぇ:zwe ずぉ:zwo");
             return result;
 
             void add(string rows)

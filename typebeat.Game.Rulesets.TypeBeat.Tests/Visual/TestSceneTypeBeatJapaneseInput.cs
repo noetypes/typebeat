@@ -179,6 +179,22 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             AddAssert("kana pronunciations replay exactly", reDerivedMatchesLive);
         }
 
+        [TestCase("きぃてゃてぃでぇふゅ", "kyithat'idhehwyu")]
+        [TestCase("っやっちゃ", "yyatcha")]
+        [TestCase("とぁどぉぐぅすぇずぉ", "twadwogwuswezwo")]
+        public void TestExtendedWapuroSpellingsThroughGameplayAndReplay(string kana, string input)
+        {
+            AddStep("extended wapuro fixture", () => testLine = new LyricLine
+            {
+                RawText = input, Original = kana, StartTime = 0, EndTime = 600000, SingEndTime = 300000,
+                Units = new[] { new TimedUnit { Text = input, Original = kana, StartTime = 0, EndTime = 300000 } },
+            });
+            load();
+            press(input);
+            AddAssert("extended spellings type every kana", () => engine.Lines[0].Cells.All(c => c.State == CellState.Correct) && engine.Mistypes == 0);
+            AddAssert("extended spellings replay exactly", reDerivedMatchesLive);
+        }
+
         [Test]
         public void TestPendingBackspaceAndFuriganaLayout()
         {
@@ -238,7 +254,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         private void press(string text)
         {
             foreach (char c in text)
-                AddStep($"press {c}", () => InputManager.Key(Enum.Parse<Key>(char.ToUpperInvariant(c).ToString())));
+                AddStep($"press {c}", () => InputManager.Key(c switch
+                {
+                    '\'' => Key.Quote,
+                    '-' => Key.Minus,
+                    ' ' => Key.Space,
+                    _ => Enum.Parse<Key>(char.ToUpperInvariant(c).ToString()),
+                }));
         }
 
         private bool reDerivedMatchesLive()
