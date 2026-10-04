@@ -12,6 +12,7 @@ using typebeat.Game.Rulesets.Mods;
 using typebeat.Game.Rulesets.Scoring;
 using typebeat.Game.Rulesets.TypeBeat.Objects;
 using typebeat.Game.Rulesets.TypeBeat.Scoring;
+using typebeat.Game.Screens.Edit.GameplayTest;
 using typebeat.Game.Skinning;
 
 namespace typebeat.Game.Rulesets.TypeBeat.UI
@@ -77,9 +78,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         protected override void Update()
         {
             base.Update();
-            // The engine's WPM clock includes rate mods but excludes separate playback
-            // adjustments. Editor Test Play therefore already reports WPM normalized to its
-            // selected editor tempo; dividing by that tempo here would normalize it twice.
+            // The engine owns rate handling, including the build-specific editor preview tempo.
+            // Applying the editor tempo again here would scale the counter twice.
             if (playfield != null)
                 Text = playfield.Engine.LiveRollingWpm.ToString("0");
         }
@@ -103,16 +103,16 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         }
 
         [BackgroundDependencyLoader(true)]
-        private void load(IBeatmap? playableBeatmap, IReadOnlyList<Mod>? gameplayMods)
+        private void load(IBeatmap? playableBeatmap, IReadOnlyList<Mod>? gameplayMods, EditorTestPlayback? editorPlayback)
         {
             mods = gameplayMods;
-            difficultCharacters = playableBeatmap == null
-                ? 0
-                : PerformancePoints.DifficultCharactersFor(playableBeatmap.HitObjects.OfType<TypeBeatHitObject>().Select(h => h.Line), gameplayMods);
+            double statisticsRate = editorPlayback?.StatisticsRate ?? 1;
+            var difficulty = PerformancePointsDisplay.DifficultyFor(playableBeatmap, gameplayMods, requireRankedMap: false, playbackRate: statisticsRate);
+            difficultCharacters = difficulty?.DifficultCharacters ?? 0;
             playedDurationSeconds = playableBeatmap == null
                 ? 0
-                : PerformancePoints.PlayedDurationFor(playableBeatmap.HitObjects.OfType<TypeBeatHitObject>().Select(h => h.Line), gameplayMods);
-            starRating = TypeBeatHudOverlay.StarRatingFor(playableBeatmap, gameplayMods);
+                : PerformancePoints.PlayedDurationFor(playableBeatmap.HitObjects.OfType<TypeBeatHitObject>().Select(h => h.Line), gameplayMods) / statisticsRate;
+            starRating = difficulty?.Stars;
             Text = PerformancePointsDisplay.Format(starRating == null ? null : 0d);
         }
 

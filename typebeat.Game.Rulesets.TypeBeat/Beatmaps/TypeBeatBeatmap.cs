@@ -7,6 +7,7 @@ using System.Linq;
 using osu.Framework.Graphics.Sprites;
 using typebeat.Game.Beatmaps;
 using typebeat.Game.Rulesets.TypeBeat.Objects;
+using typebeat.Game.Utils;
 
 namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
 {
@@ -75,7 +76,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             };
         }
 
-        public BeatmapDifficultyTags GetDifficultyTags() => DifficultyTagClassifier.Compute(HitObjects.Select(h => h.Line));
+        public BeatmapDifficultyTags GetDifficultyTags()
+            => DevelopmentFeatures.DifficultyTags ? DifficultyTagClassifier.Compute(HitObjects.Select(h => h.Line)) : BeatmapDifficultyTags.None;
 
         public override IEnumerable<BeatmapStatistic> GetStatistics()
         {

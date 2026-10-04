@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using typebeat.Game.Rulesets.Mods;
+using typebeat.Game.Utils;
 
 namespace typebeat.Game.Beatmaps
 {
@@ -48,9 +49,13 @@ namespace typebeat.Game.Beatmaps
         /// <summary>Bump when classification changes to refresh cached tags in existing libraries.</summary>
         public const int DIFFICULTY_TAGS_VERSION = 1;
 
+        /// <summary>Release builds leave tags unprocessed so a later dev build can classify them.</summary>
+        public static int ActiveDifficultyTagsVersion => DevelopmentFeatures.DifficultyTags ? DIFFICULTY_TAGS_VERSION : 0;
+
         public static BeatmapDifficultyTags ComputeDifficultyTags(IWorkingBeatmap working)
-            => (working.GetPlayableBeatmap(working.BeatmapInfo.Ruleset, Array.Empty<Mod>()) as IHasDifficultyTags)?.GetDifficultyTags()
-               ?? BeatmapDifficultyTags.None;
+            => DevelopmentFeatures.DifficultyTags
+                ? (working.GetPlayableBeatmap(working.BeatmapInfo.Ruleset, Array.Empty<Mod>()) as IHasDifficultyTags)?.GetDifficultyTags() ?? BeatmapDifficultyTags.None
+                : BeatmapDifficultyTags.None;
 
         /// <summary>
         /// Whether a row's stored facts can be trusted. See the class remarks.
@@ -90,7 +95,7 @@ namespace typebeat.Game.Beatmaps
             beatmap.TargetWpm = targetWpm;
             beatmap.HasIntroBeatdrop = hasIntroBeatdrop;
             beatmap.DifficultyTags = tags;
-            beatmap.DifficultyTagsVersion = DIFFICULTY_TAGS_VERSION;
+            beatmap.DifficultyTagsVersion = ActiveDifficultyTagsVersion;
         }
 
         /// <summary>

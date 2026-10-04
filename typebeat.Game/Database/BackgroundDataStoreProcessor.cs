@@ -243,9 +243,10 @@ namespace typebeat.Game.Database
 
             Logger.Log("Querying for beatmaps with missing typing facts...");
 
+            int difficultyTagsVersion = StoredBeatmapFacts.ActiveDifficultyTagsVersion;
             realmAccess.Run(r =>
             {
-                foreach (var b in r.All<BeatmapInfo>().Where(b => (b.TargetWpm < 0 || b.DifficultyTagsVersion < StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION) && b.BeatmapSet != null))
+                foreach (var b in r.All<BeatmapInfo>().Where(b => (b.TargetWpm < 0 || b.DifficultyTagsVersion < difficultyTagsVersion) && b.BeatmapSet != null))
                     beatmapIds.Add(b.ID);
             });
 
@@ -254,7 +255,9 @@ namespace typebeat.Game.Database
 
             Logger.Log($"Found {beatmapIds.Count} beatmaps which require typing fact processing.");
 
-            var notification = showProgressNotification(beatmapIds.Count, "Processing map facts and tags", "map facts and tags have been processed");
+            var notification = difficultyTagsVersion > 0
+                ? showProgressNotification(beatmapIds.Count, "Processing map facts and tags", "map facts and tags have been processed")
+                : showProgressNotification(beatmapIds.Count, "Processing map facts", "map facts have been processed");
 
             int processedCount = 0;
             int failedCount = 0;
@@ -295,7 +298,7 @@ namespace typebeat.Game.Database
                             liveBeatmapInfo.TargetWpm = targetWpm;
                             liveBeatmapInfo.HasIntroBeatdrop = hasIntroBeatdrop;
                             liveBeatmapInfo.DifficultyTags = tags;
-                            liveBeatmapInfo.DifficultyTagsVersion = StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION;
+                            liveBeatmapInfo.DifficultyTagsVersion = difficultyTagsVersion;
 
                             if (NeedsOnlineLanguage(liveBeatmapInfo))
                                 liveBeatmapInfo.LastOnlineUpdate = null;

@@ -22,6 +22,7 @@ using typebeat.Game.Screens.Select;
 using typebeat.Game.Screens.Select.Filter;
 using typebeat.Game.Tests.Visual;
 using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
+using typebeat.Game.Utils;
 
 namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
 {
@@ -208,6 +209,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         [Test]
         public void TagsFollowTheSelectedDifficultyAndToggleTogether()
         {
+            requireDifficultyTags();
             BeatmapInfo normal = null!, hard = null!;
             AddStep("get difficulty fixtures", () => { normal = beatmapSet.Beatmaps.First(); hard = beatmapSet.Beatmaps.Last(); });
             AddAssert("set uses selected or hardest difficulty", () => tagsOf(setPanel).Tags == (Beatmap.Value.BeatmapInfo.ID == normal.ID ? normal : hard).DifficultyTags);
@@ -227,6 +229,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         [Test]
         public void ShowTagsButtonControlsVisibility()
         {
+            requireDifficultyTags();
             ShearedToggleButton button = null!;
             bool converts = false;
             AddStep("find show tags button", () =>
@@ -248,6 +251,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         [Test]
         public void TagsPushUpdateButtonToTheRight()
         {
+            requireDifficultyTags();
             float setX = 0, standaloneX = 0;
             AddStep("show update buttons", () =>
             {
@@ -268,6 +272,40 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             AddStep("hide tags", () => config.SetValue(OsuSetting.ShowDifficultyTags, false));
             AddUntilStep("buttons reclaim tag width", () => setPanel.ChildrenOfType<PanelUpdateBeatmapButton>().Single().X < setX && standalonePanel.ChildrenOfType<PanelUpdateBeatmapButton>().Single().X < standaloneX);
             AddStep("show tags", () => config.SetValue(OsuSetting.ShowDifficultyTags, true));
+        }
+
+        [Test]
+        public void DifficultyTagsAreOnlyAvailableInDevelopmentBuilds()
+        {
+#if DEBUG
+            bool tagsAvailable = true;
+#else
+            bool tagsAvailable = false;
+#endif
+            AddUntilStep("filter loaded", () => songSelect.ChildrenOfType<FilterControl>().Single().IsLoaded);
+            AddAssert("show tags control follows build policy", () =>
+                songSelect.ChildrenOfType<FilterControl>().Single().ChildrenOfType<ShearedToggleButton>()
+                    .Any(b => b.Text.ToString() == "Show tags") == tagsAvailable);
+            AddStep("enable saved tag preference", () => config.SetValue(OsuSetting.ShowDifficultyTags, true));
+            AddUntilStep("cached tags follow build policy", () =>
+                tagsOf(setPanel).Alpha == (tagsAvailable ? 1 : 0)
+                && tagsOf(standalonePanel).Alpha == (tagsAvailable ? 1 : 0));
+            if (!tagsAvailable)
+            {
+                AddAssert("cached dev tags cannot reserve release layout space", () =>
+                    tagsOf(setPanel).Count == 0 && tagsOf(setPanel).DrawWidth == 0
+                    && tagsOf(standalonePanel).Count == 0 && tagsOf(standalonePanel).DrawWidth == 0);
+                AddStep("select map with cached dev tags", () => Beatmap.Value = CreateWorkingBeatmap(new TypeBeatBeatmap { BeatmapInfo = beatmapSet.Beatmaps.Last() }));
+                AddUntilStep("title wedge also suppresses cached dev tags", () =>
+                    tagsOf(songSelect.ChildrenOfType<BeatmapTitleWedge>().Single()).Alpha == 0
+                    && tagsOf(songSelect.ChildrenOfType<BeatmapTitleWedge>().Single()).Count == 0);
+            }
+        }
+
+        private static void requireDifficultyTags()
+        {
+            if (!DevelopmentFeatures.DifficultyTags)
+                Assert.Ignore("Difficulty tags are a development-only WIP.");
         }
 
         private static BeatmapDifficultyTagsDisplay tagsOf(Drawable drawable) => drawable.ChildrenOfType<BeatmapDifficultyTagsDisplay>().Single();

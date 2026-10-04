@@ -7,6 +7,7 @@ using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
 using typebeat.Game.Configuration;
 using typebeat.Game.Graphics;
+using typebeat.Game.Utils;
 using osuTK;
 
 namespace typebeat.Game.Beatmaps.Drawables
@@ -24,6 +25,8 @@ namespace typebeat.Game.Beatmaps.Drawables
             get => tags;
             set
             {
+                if (!DevelopmentFeatures.DifficultyTags)
+                    value = BeatmapDifficultyTags.None;
                 if ((value & BeatmapDifficultyTags.Burst) != 0)
                     value &= ~BeatmapDifficultyTags.Stamina;
                 if (tags == value)
@@ -54,6 +57,12 @@ namespace typebeat.Game.Beatmaps.Drawables
         private void rebuild()
         {
             Clear();
+            if (!DevelopmentFeatures.DifficultyTags)
+            {
+                updateVisibility();
+                return;
+            }
+
             foreach (var tag in new[] { BeatmapDifficultyTags.Rhythm, BeatmapDifficultyTags.Complex, BeatmapDifficultyTags.Freestyle, BeatmapDifficultyTags.Burst, BeatmapDifficultyTags.Stamina })
             {
                 if ((tags & tag) != 0)
@@ -62,6 +71,6 @@ namespace typebeat.Game.Beatmaps.Drawables
             updateVisibility();
         }
 
-        private void updateVisibility() => Alpha = showTags.Value && tags != BeatmapDifficultyTags.None ? 1 : 0;
+        private void updateVisibility() => Alpha = DevelopmentFeatures.DifficultyTags && showTags.Value && tags != BeatmapDifficultyTags.None ? 1 : 0;
     }
 }

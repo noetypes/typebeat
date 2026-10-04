@@ -26,6 +26,7 @@ using typebeat.Game.Online.API.Requests.Responses;
 using typebeat.Game.Rulesets;
 using typebeat.Game.Rulesets.Mods;
 using typebeat.Game.Screens.Select.Filter;
+using typebeat.Game.Utils;
 using osuTK;
 using osuTK.Input;
 
@@ -39,7 +40,7 @@ namespace typebeat.Game.Screens.Select
         private const float corner_radius = 10;
 
         private SongSelectSearchTextBox searchTextBox = null!;
-        private ShearedToggleButton showDifficultyTagsButton = null!;
+        private ShearedToggleButton? showDifficultyTagsButton;
         private readonly BindableBool showConvertedBeatmaps = new BindableBool();
         private DifficultyRangeSlider difficultyRangeSlider = null!;
         private ShearedDropdown<SortMode> sortDropdown = null!;
@@ -149,14 +150,14 @@ namespace typebeat.Game.Screens.Select
                                                 MinRange = 0.1f,
                                             },
                                             Empty(),
-                                            showDifficultyTagsButton = new ShearedToggleButton
+                                            DevelopmentFeatures.DifficultyTags ? showDifficultyTagsButton = new ShearedToggleButton
                                             {
                                                 Anchor = Anchor.Centre,
                                                 Origin = Anchor.Centre,
                                                 AutoSizeAxes = Axes.X,
                                                 Text = UserInterfaceStrings.ShowTags,
                                                 Height = 30f,
-                                            },
+                                            } : Empty(),
                                         },
                                     }
                                 },
@@ -213,7 +214,8 @@ namespace typebeat.Game.Screens.Select
 
             difficultyRangeSlider.LowerBound = config.GetBindable<double>(OsuSetting.DisplayStarsMinimum);
             difficultyRangeSlider.UpperBound = config.GetBindable<double>(OsuSetting.DisplayStarsMaximum);
-            config.BindWith(OsuSetting.ShowDifficultyTags, showDifficultyTagsButton.Active);
+            if (showDifficultyTagsButton != null)
+                config.BindWith(OsuSetting.ShowDifficultyTags, showDifficultyTagsButton.Active);
             config.BindWith(OsuSetting.ShowConvertedBeatmaps, showConvertedBeatmaps);
             var savedSort = config.GetBindable<SortMode>(OsuSetting.SongSelectSortingMode);
             if (savedSort.Value == SortMode.BPM)

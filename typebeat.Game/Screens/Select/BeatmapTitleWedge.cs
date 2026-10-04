@@ -267,6 +267,9 @@ namespace typebeat.Game.Screens.Select
             difficultyTagsCancellationSource?.Cancel();
             difficultyTagsCancellationSource?.Dispose();
             difficultyTagsCancellationSource = null;
+            if (!DevelopmentFeatures.DifficultyTags)
+                return;
+
             var current = working.Value;
             difficultyTags.Tags = current.BeatmapInfo.DifficultyTags;
             if (current is DummyWorkingBeatmap || current.BeatmapInfo.DifficultyTagsVersion >= StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION)

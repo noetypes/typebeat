@@ -81,15 +81,24 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         [Test]
         public void ApplyingFactsReplacesTagsAfterAnEdit()
         {
-            var info = new BeatmapInfo();
+            var info = new BeatmapInfo
+            {
+                DifficultyTags = BeatmapDifficultyTags.Rhythm,
+                DifficultyTagsVersion = StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION,
+            };
             TypeBeatBeatmap map(string text) => new TypeBeatBeatmap
             {
                 BeatmapInfo = new BeatmapInfo { Ruleset = new TypeBeatRuleset().RulesetInfo },
                 HitObjects = new List<TypeBeatHitObject> { new TypeBeatHitObject { Line = phrase(text, 0, 4000) } },
             };
             StoredBeatmapFacts.Apply(info, new TestWorkingBeatmap(map("hello &&&")));
+#if DEBUG
             Assert.That(info.DifficultyTags.HasFlag(BeatmapDifficultyTags.Freestyle), Is.True);
             Assert.That(info.DifficultyTagsVersion, Is.EqualTo(StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION));
+#else
+            Assert.That(info.DifficultyTags, Is.EqualTo(BeatmapDifficultyTags.None));
+            Assert.That(info.DifficultyTagsVersion, Is.Zero);
+#endif
             StoredBeatmapFacts.Apply(info, new TestWorkingBeatmap(map("hello world")));
             Assert.That(info.DifficultyTags.HasFlag(BeatmapDifficultyTags.Freestyle), Is.False);
         }
@@ -116,8 +125,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
                     });
                 }
                 using var access = new RealmAccess(storage, "client.realm");
-                int pending = access.Run(r => r.All<BeatmapInfo>().Count(b => (b.TargetWpm < 0 || b.DifficultyTagsVersion < StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION) && b.BeatmapSet != null));
+                int version = StoredBeatmapFacts.ActiveDifficultyTagsVersion;
+                int pending = access.Run(r => r.All<BeatmapInfo>().Count(b => (b.TargetWpm < 0 || b.DifficultyTagsVersion < version) && b.BeatmapSet != null));
+#if DEBUG
                 Assert.That(pending, Is.EqualTo(1));
+#else
+                Assert.That(pending, Is.Zero, "release builds must not queue tag-only backfills");
+#endif
                 access.Write(r =>
                 {
                     var beatmap = r.Find<BeatmapInfo>(id)!;
