@@ -185,6 +185,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                 engine.AuthoredSyllablesOnly = frame.AuthoredSyllablesOnly;
                 engine.AlignSubdivisionTargets = frame.AlignSubdivisionTargets;
                 engine.JapaneseRomajiInput = frame.JapaneseRomajiInput;
+                engine.JapaneseWordTiming = frame.JapaneseWordTiming;
                 return;
             }
 
@@ -225,6 +226,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
             engine.AuthoredSyllablesOnly = false;
             engine.AlignSubdivisionTargets = false;
             engine.JapaneseRomajiInput = false;
+            engine.JapaneseWordTiming = false;
         }
 
         /// <summary>

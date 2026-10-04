@@ -685,7 +685,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             /// replay's headers selected (backlog 363: above all the grouping, which the lyric stack
             /// re-lays when it flips back).
             /// </summary>
-            private (bool RushCapCostsAccuracy, bool InputEra2, bool AuthoredSyllablesOnly, bool AlignSubdivisionTargets, bool JapaneseRomajiInput)? liveExtendedEras;
+            private (bool RushCapCostsAccuracy, bool InputEra2, bool AuthoredSyllablesOnly, bool AlignSubdivisionTargets, bool JapaneseRomajiInput, bool JapaneseWordTiming)? liveExtendedEras;
             private int nextFrameIndex;
 
             /// <summary>
@@ -724,7 +724,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                     // The replay can be swapped mid-play (editor autoplay toggle); restart feeding.
                     if (!ReferenceEquals(replay, activeReplay))
                     {
-                        liveExtendedEras ??= (engine.RushCapCostsAccuracy, engine.InputEra2, engine.AuthoredSyllablesOnly, engine.AlignSubdivisionTargets, engine.JapaneseRomajiInput);
+                        liveExtendedEras ??= (engine.RushCapCostsAccuracy, engine.InputEra2, engine.AuthoredSyllablesOnly, engine.AlignSubdivisionTargets, engine.JapaneseRomajiInput, engine.JapaneseWordTiming);
                         activeReplay = replay;
                         nextFrameIndex = 0;
                         lastFedTime = double.NegativeInfinity;
@@ -804,6 +804,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                         engine.AuthoredSyllablesOnly = live.AuthoredSyllablesOnly;
                         engine.AlignSubdivisionTargets = live.AlignSubdivisionTargets;
                         engine.JapaneseRomajiInput = live.JapaneseRomajiInput;
+                        engine.JapaneseWordTiming = live.JapaneseWordTiming;
                     }
 
                     liveExtendedEras = null;

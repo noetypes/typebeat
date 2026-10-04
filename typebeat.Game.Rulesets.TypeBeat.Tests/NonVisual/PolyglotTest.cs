@@ -61,8 +61,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
 
         private static string display(TypingLine l) => l.DisplayText;
 
-        private static TypingLine polyglot(LyricLine l, bool literate = false, string? language = null)
-            => TypingLine.ForMods(l, literate, true, language);
+        private static TypingLine polyglot(LyricLine l, bool literate = false, string? language = null, bool japaneseWordTiming = true)
+            => TypingLine.ForMods(l, literate, true, language, japaneseWordTiming: japaneseWordTiming);
 
         /// <summary>"Privet mir" over two words, both recording a Cyrillic original.</summary>
         private static LyricLine privetMir(bool withOriginals = true) => line(
@@ -194,10 +194,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         /// segment's two cells at 1000 and 1200, then one cell on each boundary.
         /// </summary>
         [Test]
-        public void RomanisedCutsCarryBackThroughTheRomanisersUnits()
+        public void LegacyJapaneseReplayCutsCarryBackThroughTheRomanisersUnits()
         {
             var l = line(unit("konnichiha", 1000, 3000, "こんにちは", new[] { 1400.0, 1800, 2400 }, new[] { 3, 5, 8 }));
-            var cells = polyglot(l, language: "japanese");
+            var cells = polyglot(l, language: "japanese", japaneseWordTiming: false);
 
             Assert.Multiple(() =>
             {
@@ -232,7 +232,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
 
         /// <summary>
         /// A joined Japanese run is cut only where something was AUTHORED: its word seams (and the
-        /// words' own subdivisions, see <see cref="RomanisedCutsCarryBackThroughTheRomanisersUnits"/>).
+        /// words' own subdivisions on older replays, see <see cref="LegacyJapaneseReplayCutsCarryBackThroughTheRomanisersUnits"/>).
         /// Two unsubdivided words meet at one boundary, the seam, where they used to carry every natural
         /// cut of both romanisations in as timed boundaries that moved the targets.
         /// </summary>
@@ -299,7 +299,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         [TestCase(true, false)]
         [TestCase(false, true)]
         [TestCase(true, true)]
-        public void IntentionalSpacesInsideAJapaneseWordOriginalKeepTheirTimingAndCuts(bool subdivided, bool fromLine)
+        public void IntentionalSpacesInsideAJapaneseWordOriginalIgnoreRomanisedCuts(bool subdivided, bool fromLine)
         {
             var l = new LyricLine
             {
@@ -309,7 +309,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
                     subdivided ? new[] { 2000.0 } : null, subdivided ? new[] { 5 } : null) },
             };
             var cells = polyglot(l, language: "japanese");
-            double seam = subdivided ? 2000 : 1800;
+            double seam = 1800;
             Assert.Multiple(() =>
             {
                 Assert.That(display(cells), Is.EqualTo("つき テンシ"));
@@ -319,14 +319,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         }
 
         [Test]
-        public void OriginalSpacesInsideAUnitPreserveSubdivisionsOnBothSides()
+        public void LegacyJapaneseReplaySpacesInsideAUnitPreserveSubdivisionsOnBothSides()
         {
             var l = new LyricLine
             {
                 RawText = "tsukitenshi", Original = "つき テンシ", StartTime = 0, EndTime = 6000, SingEndTime = 3000,
                 Units = new[] { unit("tsukitenshi", 1000, 3000, "つきテンシ", new[] { 1400.0, 2000.0, 2600.0 }, new[] { 3, 5, 8 }) },
             };
-            var cells = polyglot(l, language: "japanese");
+            var cells = polyglot(l, language: "japanese", japaneseWordTiming: false);
             Assert.Multiple(() =>
             {
                 Assert.That(display(cells), Is.EqualTo("つき テンシ"));

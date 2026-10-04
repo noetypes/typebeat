@@ -86,6 +86,30 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             AddAssert("legacy replay reproduces the play", reDerivedMatchesLive);
         }
 
+        [Test]
+        public void TestJapaneseWordsIgnoreRomanisedSubdivisions()
+        {
+            AddStep("use a subdivided kana word", () => testLine = new LyricLine
+            {
+                RawText = "konnichiha", Original = "こんにちは", StartTime = 0, EndTime = 600000, SingEndTime = 300000,
+                Units = new[]
+                {
+                    new TimedUnit
+                    {
+                        Text = "konnichiha", Original = "こんにちは", StartTime = 0, EndTime = 300000,
+                        SyllableBoundaries = new[] { 100.0, 200, 300 }, SyllableSplits = new[] { 3, 5, 8 },
+                    },
+                },
+            });
+            load();
+            AddAssert("the whole mapper word has one timing window", () => engine.Lines[0].Syllables.Count == 1
+                && engine.Lines[0].Syllables[0].StartTime == 0 && engine.Lines[0].Syllables[0].EndTime == 300000);
+            press("konnichiha");
+            AddAssert("all kana typed correctly", () => engine.Lines[0].Cells.All(c => c.State == CellState.Correct) && engine.Mistypes == 0);
+            AddAssert("the recorder stores the word timing rule", () => frames.Single(f => f.IsConfigExtended).JapaneseWordTiming);
+            AddAssert("the recorded timing and score replay exactly", reDerivedMatchesLive);
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void TestKanaAndWordSeamsThroughGameplayAndReplay(bool originalSpaces)

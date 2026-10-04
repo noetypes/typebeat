@@ -212,7 +212,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
     public sealed class TypingLine
     {
-        public LyricLine Source { get; }
+        public LyricLine Source { get; private set; }
 
         /// <summary>
         /// The line exactly as it is shown and exactly as it must be typed: the concatenated cell
@@ -225,7 +225,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         private bool japanese;
         private LyricLine? japaneseAuthoredLine;
         private JapaneseInputPlan? japaneseInput;
-        internal JapaneseInputPlan? JapaneseInput => japanese ? japaneseInput ??= JapaneseInputPlan.Create(DisplayText, japaneseAuthoredLine) : null;
+        internal JapaneseInputPlan? JapaneseInput => japanese ? japaneseInput ??= JapaneseInputPlan.Create(DisplayText, japaneseAuthoredLine, japaneseWordTiming) : null;
 
         public IReadOnlyList<TypingCell> Cells { get; }
 
@@ -324,7 +324,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// What <see cref="Syllables"/>, <see cref="SyllableIndexOf"/>,
         /// <see cref="SyllableMarkerCells"/> and <see cref="IsCharTimedStretch"/> read.
         /// </summary>
-        public SyllableGrouping AuthoredGrouping { get; }
+        public SyllableGrouping AuthoredGrouping { get; private set; }
 
         /// <summary>
         /// The STORED-ERA grouping (backlog 363): as <see cref="AuthoredGrouping"/>, except that a
@@ -334,7 +334,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// <see cref="TypingEngine.AuthoredSyllablesOnly"/> was judged, lit and paced on. The same
         /// instance as <see cref="AuthoredGrouping"/> on a line where the two agree.
         /// </summary>
-        public SyllableGrouping NaturalGrouping { get; }
+        public SyllableGrouping NaturalGrouping { get; private set; }
 
         /// <summary>
         /// <see cref="AuthoredGrouping"/> when <paramref name="authoredSyllablesOnly"/> (every live
@@ -377,7 +377,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// (<see cref="TypingEngine.WordShelter"/>); every other consumer of the timing uses
         /// <see cref="Syllables"/> and the per-cell targets. See <see cref="WordGroup"/>.
         /// </summary>
-        public IReadOnlyList<WordGroup> Words { get; }
+        public IReadOnlyList<WordGroup> Words { get; private set; }
 
         /// <summary>Per display cell, the index into <see cref="Words"/> or -1 (space cells, and cells of a token the default stream deleted).</summary>
         private readonly int[] cellWord;
@@ -440,6 +440,40 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         private double[]? legacyTargets;
         private double legacySealGrace;
         private bool alignedSubdivisionTargets;
+        private bool japaneseWordTiming = true;
+        private Func<bool, TypingLine>? japaneseTimingFactory;
+        private TypingLine? legacyJapaneseTiming;
+        private TypingLine? wordJapaneseTiming;
+
+        /// <summary>Select Japanese word timing without replacing cells held by the renderer.</summary>
+        internal void SetJapaneseWordTiming(bool enabled)
+        {
+            if (!japanese || japaneseWordTiming == enabled)
+                return;
+
+            var timing = enabled ? wordJapaneseTiming ??= japaneseTimingFactory!(true)
+                                 : legacyJapaneseTiming ??= japaneseTimingFactory!(false);
+            timing.SetAlignedSubdivisionTargets(alignedSubdivisionTargets);
+            if (timing.DisplayText != DisplayText)
+                throw new InvalidOperationException("Japanese timing eras must have the same display cells.");
+
+            japaneseWordTiming = enabled;
+            japaneseInput = null;
+            Source = timing.Source;
+            AuthoredGrouping = timing.AuthoredGrouping;
+            NaturalGrouping = timing.NaturalGrouping;
+            Words = timing.Words;
+            Array.Copy(timing.cellWord, cellWord, cellWord.Length);
+            for (int i = 0; i < Cells.Count; i++)
+                Cells[i].TargetTime = timing.Cells[i].TargetTime;
+            SealGraceMs = timing.SealGraceMs;
+            alignedTimingFactory = timing.alignedTimingFactory;
+            alignedTargets = timing.alignedTargets;
+            alignedSealGrace = timing.alignedSealGrace;
+            legacyTargets = timing.legacyTargets;
+            legacySealGrace = timing.legacySealGrace;
+            rebuildSungPoints();
+        }
 
         /// <summary>Switch timing eras without replacing cells referenced by the renderer or engine.</summary>
         internal void SetAlignedSubdivisionTargets(bool aligned)
@@ -629,15 +663,19 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// <see cref="LyricOriginals.RomanisationLanguage"/>), which is what lets the romanised
         /// syllable cuts be carried back onto the original.</param>
         /// <param name="alignSubdivisionTargets">The target era (see <see cref="FromLyricLine"/>).</param>
-        public static TypingLine ForMods(LyricLine line, bool literate, bool polyglot, string? language, bool alignSubdivisionTargets = false)
+        /// <param name="japaneseWordTiming">Ignore romanised subdivisions within Japanese words.</param>
+        public static TypingLine ForMods(LyricLine line, bool literate, bool polyglot, string? language, bool alignSubdivisionTargets = false, bool japaneseWordTiming = true)
         {
             if (!polyglot)
                 return FromLyricLine(line, literate, alignSubdivisionTargets);
 
-            var derived = PolyglotLine.Derive(line, language);
+            var derived = PolyglotLine.Derive(line, language, japaneseWordTiming);
             var result = withTargetEra(build(derived.Line, literate, CellRules.Polyglot, derived.NaturalSplits, derived.RawCluster), alignSubdivisionTargets);
             result.japanese = JapaneseReading.IsJapanese(language);
             result.japaneseAuthoredLine = line;
+            result.japaneseWordTiming = japaneseWordTiming;
+            if (result.japanese)
+                result.japaneseTimingFactory = wordTiming => ForMods(line, literate, true, language, japaneseWordTiming: wordTiming);
             return result;
         }
 

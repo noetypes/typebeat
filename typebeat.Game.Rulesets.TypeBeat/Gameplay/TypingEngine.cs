@@ -1014,6 +1014,29 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             }
         }
 
+        private bool japaneseWordTiming = true;
+
+        /// <summary>Japanese Polyglot words ignore romanised subdivisions. Extended replay bit 5.</summary>
+        public bool JapaneseWordTiming
+        {
+            get => japaneseWordTiming;
+            set
+            {
+                if (japaneseWordTiming == value)
+                    return;
+                japaneseWordTiming = value;
+                if (!UsesJapaneseRomaji)
+                    return;
+                foreach (var line in lines)
+                    line.SetJapaneseWordTiming(value);
+                clearJapanesePending();
+                rebuildCountableTargets();
+                JapaneseWordTimingChanged?.Invoke();
+            }
+        }
+
+        public event Action? JapaneseWordTimingChanged;
+
         private string japanesePending = string.Empty;
         private int japanesePendingLine = -1;
         private int japanesePendingCell = -1;

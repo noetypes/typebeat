@@ -62,7 +62,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             return next < cells.Length ? cells[next]?.Reading ?? text[next].ToString() : string.Empty;
         }
 
-        internal static JapaneseInputPlan Create(string text, LyricLine? authored = null)
+        internal static JapaneseInputPlan Create(string text, LyricLine? authored = null, bool respectWordBoundaries = true)
         {
             var groups = new List<Group>();
             var parts = JapaneseReading.Read(text).ToList();
@@ -83,6 +83,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 if (!surface.Any(Utilities.IsKanji))
                     continue;
 
+                // A dictionary compound may straddle two mapper-authored timing windows.
+                // Read those pieces separately so committing one cannot judge the next word.
+                if (respectWordBoundaries && parts.Any(p => p.Start < nextOriginal && p.Start + p.Length > start
+                                                          && (p.Start < start || p.Start + p.Length > nextOriginal)))
+                    replaceParts(start, nextOriginal, JapaneseReading.Read(surface)
+                        .Select(p => new JapaneseReading.Reading(start + p.Start, p.Length, p.Kana)));
+
                 string spelling = unit.Text.ToLowerInvariant();
                 var dictionary = JapaneseReading.Romanise(original, "japanese");
                 if (dictionary?.Text == spelling)
@@ -94,16 +101,21 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 string? reading = JapaneseRomaji.ReadAuthored(spelling);
                 if (reading == null)
                     continue;
-                var overlapping = parts.Where(p => p.Start < nextOriginal && p.Start + p.Length > start).ToArray();
-                parts.RemoveAll(p => p.Start < nextOriginal && p.Start + p.Length > start);
+                replaceParts(start, nextOriginal, new[] { new JapaneseReading.Reading(start, surface.Length, reading) });
+            }
+
+            void replaceParts(int start, int end, IEnumerable<JapaneseReading.Reading> replacements)
+            {
+                var overlapping = parts.Where(p => p.Start < end && p.Start + p.Length > start).ToArray();
+                parts.RemoveAll(p => p.Start < end && p.Start + p.Length > start);
                 foreach (var part in overlapping)
                 {
                     if (part.Start < start)
                         addRemainder(part.Start, start);
-                    if (part.Start + part.Length > nextOriginal)
-                        addRemainder(nextOriginal, part.Start + part.Length);
+                    if (part.Start + part.Length > end)
+                        addRemainder(end, part.Start + part.Length);
                 }
-                parts.Add(new JapaneseReading.Reading(start, surface.Length, reading));
+                parts.AddRange(replacements);
             }
 
             void addRemainder(int start, int end)

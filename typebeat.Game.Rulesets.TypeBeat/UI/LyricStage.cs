@@ -344,6 +344,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             // The target era switches the same way (a replay recorded before AlignSubdivisionTargets
             // flips the cells back to the legacy targets), and the bands are laid from those targets.
             engine.AlignSubdivisionTargetsChanged += regroup;
+            engine.JapaneseWordTimingChanged += regroup;
 
             // Carets are positioned via absolute points in this stage's top-left-origin
             // local space (from ToSpaceOfOtherDrawable), so they must anchor top-left.
@@ -1535,6 +1536,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             {
                 engine.AuthoredSyllablesOnlyChanged -= regroup;
                 engine.AlignSubdivisionTargetsChanged -= regroup;
+                engine.JapaneseWordTimingChanged -= regroup;
             }
 
             base.Dispose(isDisposing);
