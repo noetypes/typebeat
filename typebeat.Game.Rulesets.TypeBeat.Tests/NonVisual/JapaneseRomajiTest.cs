@@ -226,9 +226,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         [TestCase(false, true)]
         [TestCase(true, false)]
         [TestCase(true, true)]
-        public void SpacesOnJapaneseTextAreDeniedAndKeepPendingInput(bool skipping, bool gatekeeper)
+        public void LegacyJapaneseSpacesAreDeniedAndKeepPendingInput(bool skipping, bool gatekeeper)
         {
             var engine = create("月と");
+            engine.JapaneseInputEra2 = false;
             engine.SpaceSkipsWord = skipping;
             engine.StrictSpaces = true;
             engine.AllowWrongInput = !gatekeeper;
@@ -293,14 +294,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(engine.Lines[0].Cells.Single().TypedChar, Is.EqualTo(' '));
         }
 
-        [TestCase("月")]
-        [TestCase("つ")]
-        [TestCase("ツ")]
         [TestCase("、")]
         [TestCase("!")]
         [TestCase("α")]
         [TestCase("Ж")]
-        public void SpaceToSkipDoesNotApplyToNonRomanCharactersOrPunctuation(string original)
+        public void SpaceToSkipDoesNotApplyToOtherScriptsOrPunctuation(string original)
         {
             var engine = new TypingEngine(map(original), literate: true, polyglot: true, polyglotLanguage: "japanese") { SpaceSkipsWord = true };
             engine.Update(1000);

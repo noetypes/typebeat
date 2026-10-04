@@ -44,6 +44,38 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
         internal Group? At(int cell) => cell >= 0 && cell < cells.Length ? cells[cell] : null;
 
+        private readonly Dictionary<int, Group?> remainingGroups = new Dictionary<int, Group?>();
+
+        /// <summary>The remaining reading after a direct input or skip inside a conversion group.</summary>
+        internal Group? AtForInput(int cell)
+        {
+            var group = At(cell);
+            if (group == null || group.StartCell == cell)
+                return group;
+            if (remainingGroups.TryGetValue(cell, out var remaining))
+                return remaining;
+
+            string prefix = string.Concat(JapaneseReading.Read(text.Substring(group.StartCell, cell - group.StartCell))
+                .Select(p => JapaneseRomaji.Hiragana(p.Kana)));
+            if (prefix.Length > 0 && prefix.Length < group.Reading.Length && group.Reading.StartsWith(prefix, StringComparison.Ordinal))
+                remaining = new Group(cell, group.EndCellExclusive, group.Reading[prefix.Length..], false);
+            else
+            {
+                var suffix = Create(text.Substring(cell, group.EndCellExclusive - cell)).At(0);
+                remaining = suffix == null ? null : new Group(cell, cell + suffix.EndCellExclusive, suffix.Reading, false);
+            }
+            remainingGroups[cell] = remaining;
+            return remaining;
+        }
+
+        internal bool IsJapaneseCell(int cell)
+        {
+            if (cell < 0 || cell >= text.Length || char.IsSurrogate(text[cell]))
+                return false;
+            char c = JapaneseRomaji.Hiragana(text[cell].ToString())[0];
+            return Utilities.IsKanji(c) || Utilities.IsKana(c) || c is 'ー' or '々' or '〆';
+        }
+
         internal bool IsRomanCell(int cell)
         {
             if (cell < 0 || cell >= text.Length || char.IsSurrogate(text[cell]))

@@ -782,6 +782,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// Gross WPM over active time only; 0 before any active time. Active time is REAL elapsed
         /// time (see <see cref="activeRealTimeMs"/>), not beatmap time, so the readout is the
         /// player's actual typing speed under any speed-adjusting mod rather than 1/rate of it.
+        /// Japanese internal input counts accepted keys, including romaji prefixes, rather than
+        /// the fewer original-script characters their conversions produce.
         /// </summary>
         public double LiveWpm
         {
@@ -790,7 +792,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 if (activeRealTimeMs <= 0)
                     return 0;
 
-                return (countCorrectCells() / 5.0) / (activeRealTimeMs / 60000.0);
+                return (wpmInputCount() / 5.0) / (activeRealTimeMs / 60000.0);
             }
         }
 
@@ -1037,6 +1039,28 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
         public event Action? JapaneseWordTimingChanged;
 
+        /// <summary>Extended replay bit 6: single-character Japanese skips and keystroke WPM.</summary>
+        public bool JapaneseInputEra2 { get; set; } = true;
+
+        private bool UsesJapaneseKeystrokeWpm => JapaneseInputEra2 && JapaneseRomajiInput && UsesJapaneseRomaji;
+        private int japaneseWpmInputs;
+        private int japaneseCompletionLine = -1;
+        private int japaneseCompletionCaret = -1;
+
+        private void protectJapaneseCompletion()
+        {
+            japaneseCompletionLine = activeLineIndex;
+            japaneseCompletionCaret = caretIndex;
+        }
+
+        private void recordJapaneseInput()
+        {
+            if (!UsesJapaneseKeystrokeWpm)
+                return;
+            japaneseWpmInputs++;
+            pushRollingSample();
+        }
+
         private string japanesePending = string.Empty;
         private int japanesePendingLine = -1;
         private int japanesePendingCell = -1;
@@ -1056,7 +1080,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         {
             if (!JapaneseRomajiInput || !UsesJapaneseRomaji || committingJapanese || JapanesePending.Length == 0)
                 return false;
-            var group = lines[activeLineIndex].JapaneseInput?.At(caretIndex);
+            var plan = lines[activeLineIndex].JapaneseInput;
+            var group = JapaneseInputEra2 ? plan?.AtForInput(caretIndex) : plan?.At(caretIndex);
             // Space/Enter explicitly confirm a word, so a trailing n needs no next-letter lookahead.
             if (group == null || (JapaneseRomaji.Matches(group.Reading, JapanesePending) & JapaneseRomaji.Match.Complete) == 0)
                 return false;
@@ -1069,6 +1094,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             if (!JapaneseRomajiInput || !UsesJapaneseRomaji || committingJapanese || MashingEnabled || line.Cells[caretIndex].IsFreestyle)
                 return null;
 
+            if (c != ' ')
+                japaneseCompletionLine = japaneseCompletionCaret = -1;
             if (japanesePendingLine != activeLineIndex || japanesePendingCell != caretIndex)
                 clearJapanesePending();
 
@@ -1077,7 +1104,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             {
                 int originalLine = activeLineIndex;
                 if (!tryCommitJapanesePending())
-                    return false; // An extra space neither skips Japanese nor discards a prefix.
+                {
+                    bool confirmation = japaneseCompletionLine == activeLineIndex && japaneseCompletionCaret == caretIndex;
+                    if (!JapaneseInputEra2 || !SpaceSkipsWord || !(AllowWrongInput || !InputEra2) || confirmation
+                        || plan?.IsJapaneseCell(caretIndex) != true || line.Cells[caretIndex].State == CellState.Correct)
+                        return false;
+
+                    clearJapanesePending();
+                    skipCurrentWord(time, singleJapaneseCharacter: true);
+                    advanceCaretToFrontier();
+                    rollForwardIfFinishedEarly(time);
+                    return true;
+                }
 
                 // Confirmation may also supply a genuine lyric space or a manual newline. Never
                 // run it as a word skip on a cell the confirmation just moved the caret onto.
@@ -1093,7 +1131,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 return null; // Direct kana layouts and legacy committed characters still work.
             }
 
-            var group = plan?.At(caretIndex);
+            var group = JapaneseInputEra2 ? plan?.AtForInput(caretIndex) : plan?.At(caretIndex);
             if (group == null)
             {
                 char expected = line.Cells[caretIndex].Expected;
@@ -1108,7 +1146,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                     committingJapanese = true;
                     try
                     {
-                        return ProcessKey(expected, time);
+                        bool accepted = ProcessKey(expected, time);
+                        if (accepted)
+                        {
+                            recordJapaneseInput();
+                            protectJapaneseCompletion();
+                        }
+                        return accepted;
                     }
                     finally
                     {
@@ -1139,6 +1183,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 return null; // Gatekeeper keeps a valid prefix when it rejects the wrong key.
             }
 
+            recordJapaneseInput();
             japanesePending = input;
             japanesePendingLine = activeLineIndex;
             japanesePendingCell = caretIndex;
@@ -1151,6 +1196,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         private void commitJapanese(JapaneseInputPlan.Group group, double time)
         {
             int lineIndex = activeLineIndex;
+            int startCell = caretIndex;
             clearJapanesePending();
             committingJapanese = true;
             try
@@ -1166,6 +1212,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             finally
             {
                 committingJapanese = false;
+                if (JapaneseInputEra2 && (activeLineIndex != lineIndex || caretIndex != startCell))
+                    protectJapaneseCompletion();
             }
         }
 
@@ -2216,6 +2264,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         private void reset()
         {
             clearJapanesePending();
+            japaneseCompletionLine = japaneseCompletionCaret = -1;
+            japaneseWpmInputs = 0;
             foreach (var line in lines)
             {
                 foreach (var cell in line.Cells)
@@ -3629,7 +3679,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
             // Log the press for the HUD's rolling WPM. Both branches above land the cell Correct, so a
             // scoring-inert retype still counts here: this is a record of keystrokes, not of cell states.
-            pushRollingSample();
+            if (!UsesJapaneseKeystrokeWpm)
+                pushRollingSample();
+            else if (!committingJapanese)
+                recordJapaneseInput();
+
+            bool completedJapanese = UsesJapaneseKeystrokeWpm && !committingJapanese && !cell.IsFreestyle
+                                     && cell.Expected != ' ' && line.JapaneseInput?.IsJapaneseCell(targetIndex) == true;
 
             // The cell the press landed on, which is what the display repaints and what a consumer
             // reading the judgement back has to be told: under AnyOrderWithinWord that is not always
@@ -3649,6 +3705,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
             raise(CharJudged, new CharJudgement(activeLineIndex, judgedCellIndex, type, delta, points, combo));
             rollForwardIfFinishedEarly(time);
+            if (completedJapanese)
+                protectJapaneseCompletion();
             return true;
         }
 
@@ -3681,7 +3739,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// one it passively left alone, because the argument is about the press and not about which
         /// break wrote the claim.</para>
         /// </summary>
-        private bool skipCurrentWord(double time)
+        // Japanese input shares the abandonment/reclaim accounting but limits the range to one cell.
+        private bool skipCurrentWord(double time, bool singleJapaneseCharacter = false)
         {
             var cells = lines[activeLineIndex].Cells;
 
@@ -3702,14 +3761,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             // Scanning the word is what the feature promises either way, and it puts the weight on
             // the "already resolved" test below instead of on an argument about where the caret can be.
             int start = caretIndex;
-            int end = caretIndex;
+            int end = singleJapaneseCharacter ? caretIndex + 1 : caretIndex;
             var japanesePlan = JapaneseRomajiInput && UsesJapaneseRomaji ? lines[activeLineIndex].JapaneseInput : null;
             bool canSkip(int index) => japanesePlan == null || !cells[index].IsTypeable || japanesePlan.IsRomanCell(index);
 
-            while (start > 0 && !isWordGap(cells[start - 1]) && !cells[start - 1].IsFreestyle && canSkip(start - 1))
+            while (!singleJapaneseCharacter && start > 0 && !isWordGap(cells[start - 1]) && !cells[start - 1].IsFreestyle && canSkip(start - 1))
                 start--;
 
-            while (end < cells.Count && !isWordGap(cells[end]) && !cells[end].IsFreestyle && canSkip(end))
+            while (!singleJapaneseCharacter && end < cells.Count && !isWordGap(cells[end]) && !cells[end].IsFreestyle && canSkip(end))
                 end++;
 
             // A freestyle slot is a hard stop: skip only ordinary cells before it, then let
@@ -4476,6 +4535,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
         public bool ProcessBackspace()
         {
+            japaneseCompletionLine = japaneseCompletionCaret = -1;
             if (JapaneseRomajiInput && JapanesePending.Length > 0)
             {
                 japanesePending = japanesePending[..^1];
@@ -5036,7 +5096,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
             double syncPercent = totalTimedCells == 0 ? 100 : 100 * qualitySum / totalTimedCells;
 
-            double wpm = activeRealTimeMs <= 0 ? 0 : (countCorrectCells() / 5.0) / (activeRealTimeMs / 60000.0);
+            double wpm = activeRealTimeMs <= 0 ? 0 : (wpmInputCount() / 5.0) / (activeRealTimeMs / 60000.0);
 
             return new ResultsSummary
             {
@@ -5052,7 +5112,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             };
         }
 
-        /// <summary>Correct cells (including spaces) across all lines: the WPM numerator source.</summary>
+        private int wpmInputCount() => UsesJapaneseKeystrokeWpm ? japaneseWpmInputs : countCorrectCells();
+
+        /// <summary>Correct cells (including spaces) across all lines: the legacy WPM numerator.</summary>
         private int countCorrectCells()
         {
             int count = 0;

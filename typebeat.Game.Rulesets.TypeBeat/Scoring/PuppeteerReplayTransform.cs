@@ -262,6 +262,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Scoring
             AlignSubdivisionTargets = source.AlignSubdivisionTargets,
             JapaneseRomajiInput = source.JapaneseRomajiInput,
             JapaneseWordTiming = source.JapaneseWordTiming,
+            JapaneseInputEra2 = source.JapaneseInputEra2,
         };
     }
 }

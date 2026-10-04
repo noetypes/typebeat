@@ -201,6 +201,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
     /// <para>Only EFFECTIVE inputs are recorded (calls where the engine mutated state), which is what
     /// makes playback deterministic: replaying performs, per frame, <c>Update(Time)</c> then the
     /// keystroke, the same call sequence live play makes.</para>
+    /// <para><b>Second word, bit 6 (value 64): <see cref="JapaneseInputEra2"/>.</b> Japanese
+    /// Space to Skip advances by one unfinished character; completed readings remain protected.
+    /// WPM counts accepted input keys instead of the characters produced by conversion. Older
+    /// replays retain their denied-space behavior and character-based WPM.</para>
+    ///
     /// <para><b>Second word, bit 5 (value 32): <see cref="JapaneseWordTiming"/>.</b> Japanese
     /// Polyglot ignores subdivisions inside each mapper-authored word and converts dictionary
     /// compounds within those word windows. Older replays retain their subdivision timing.</para>
@@ -545,6 +550,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
         /// <summary>Bit 5 of the extended word: Japanese words ignore romanised subdivisions.</summary>
         public bool JapaneseWordTiming;
 
+        /// <summary>Bit 6: Japanese Space skips one unfinished character and WPM counts actual inputs.</summary>
+        public bool JapaneseInputEra2;
+
         /// <summary>
         /// The ANCHOR carried by a bit-9 CONFIG frame: the track position the tape was started at,
         /// which is also the origin of the wall axis every other frame in the run is stamped on. It
@@ -627,7 +635,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
         /// Parameters are append-only and named, as <see cref="CreateConfigFrame"/>'s are; each one
         /// defaults to clear, which is what a replay with no extended frame decodes to.
         /// </summary>
-        public static TypeBeatReplayFrame CreateExtendedConfigFrame(double time, bool rushCapCostsAccuracy = false, bool inputEra2 = false, bool authoredSyllablesOnly = false, bool alignSubdivisionTargets = false, bool japaneseRomajiInput = false, bool japaneseWordTiming = false) => new TypeBeatReplayFrame(time, CONFIG_EXTENDED)
+        public static TypeBeatReplayFrame CreateExtendedConfigFrame(double time, bool rushCapCostsAccuracy = false, bool inputEra2 = false, bool authoredSyllablesOnly = false, bool alignSubdivisionTargets = false, bool japaneseRomajiInput = false, bool japaneseWordTiming = false, bool japaneseInputEra2 = false) => new TypeBeatReplayFrame(time, CONFIG_EXTENDED)
         {
             RushCapCostsAccuracy = rushCapCostsAccuracy,
             InputEra2 = inputEra2,
@@ -635,6 +643,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
             AlignSubdivisionTargets = alignSubdivisionTargets,
             JapaneseRomajiInput = japaneseRomajiInput,
             JapaneseWordTiming = japaneseWordTiming,
+            JapaneseInputEra2 = japaneseInputEra2,
         };
 
         /// <summary>Bit 0 of the EXTENDED CONFIG frame's (second) flags word: an over-cap press was
@@ -655,6 +664,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
 
         private const int ext_flag_japanese_romaji_input = 16;
         private const int ext_flag_japanese_word_timing = 32;
+        private const int ext_flag_japanese_input_era_2 = 64;
 
         /// <summary>Bit 0 of the CONFIG frame's flags word: wrong input allowed (fixed by every replay on disk).</summary>
         private const int flag_allow_wrong_input = 1;
@@ -745,6 +755,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                 AlignSubdivisionTargets = (flags & ext_flag_align_subdivision_targets) != 0;
                 JapaneseRomajiInput = (flags & ext_flag_japanese_romaji_input) != 0;
                 JapaneseWordTiming = (flags & ext_flag_japanese_word_timing) != 0;
+                JapaneseInputEra2 = (flags & ext_flag_japanese_input_era_2) != 0;
                 return;
             }
 
@@ -776,7 +787,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
             | (AuthoredSyllablesOnly ? ext_flag_authored_syllables_only : 0)
             | (AlignSubdivisionTargets ? ext_flag_align_subdivision_targets : 0)
             | (JapaneseRomajiInput ? ext_flag_japanese_romaji_input : 0)
-            | (JapaneseWordTiming ? ext_flag_japanese_word_timing : 0);
+            | (JapaneseWordTiming ? ext_flag_japanese_word_timing : 0)
+            | (JapaneseInputEra2 ? ext_flag_japanese_input_era_2 : 0);
 
         private int configFlags() =>
             (AllowWrongInput ? flag_allow_wrong_input : 0)

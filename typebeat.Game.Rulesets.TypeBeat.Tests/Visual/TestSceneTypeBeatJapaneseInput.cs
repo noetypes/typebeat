@@ -156,10 +156,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                 };
             });
             load();
-            press("te");
-            AddStep("extra space during the reading", () => InputManager.Key(Key.Space));
-            AddAssert("extra space keeps the accepted prefix", () => engine.JapanesePending == "te" && engine.CaretIndex == 0 && engine.Mistypes == 0);
-            press("n");
+            press("ten");
             AddAssert("single final n is pending confirmation", () => engine.JapanesePending == "ten");
             if (confirmation == "typing")
                 press("t");
@@ -177,15 +174,34 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         {
             AddStep("word skipping on", () => config.SetValue(TypeBeatRulesetSetting.SpaceSkipsWord, true));
             load();
-            press("t");
-            AddStep("extra space in partial reading", () => InputManager.Key(Key.Space));
-            AddAssert("prefix is retained", () => engine.JapanesePending == "t" && engine.Mistypes == 0);
-            press("uki");
+            press("tuki");
             AddStep("extra space between Japanese characters", () => InputManager.Key(Key.Space));
             AddAssert("next character stays untyped", () => engine.CaretIndex == 1 && engine.Lines[0].Cells[1].State == CellState.Untyped && engine.Mistypes == 0);
             press("totenshi");
             AddAssert("all Japanese remains correct", () => engine.Lines[0].Cells.All(c => c.State == CellState.Correct) && engine.LiveAccuracy == 1);
             AddAssert("denied spaces cannot desync the replay", reDerivedMatchesLive);
+        }
+
+        [Test]
+        public void TestSpaceSkipsOnlyAnIncompleteJapaneseCharacter()
+        {
+            AddStep("word skipping on", () => config.SetValue(TypeBeatRulesetSetting.SpaceSkipsWord, true));
+            load();
+            press("t");
+            AddStep("skip the unfinished moon", () => InputManager.Key(Key.Space));
+            AddAssert("only 月 was skipped", () => engine.CaretIndex == 1 && engine.JapanesePending.Length == 0
+                && engine.Lines[0].Cells[0].State == CellState.Abandoned
+                && engine.Lines[0].Cells.Skip(1).All(c => c.State == CellState.Untyped));
+            press("to");
+            AddStep("confirmation space after と", () => InputManager.Key(Key.Space));
+            AddAssert("天 stays untyped", () => engine.CaretIndex == 2 && engine.Lines[0].Cells[2].State == CellState.Untyped);
+            press("t");
+            AddStep("skip 天 inside its conversion group", () => InputManager.Key(Key.Space));
+            AddAssert("使 remains available", () => engine.CaretIndex == 3 && engine.Lines[0].Cells[3].State == CellState.Untyped);
+            press("shi");
+            AddAssert("the remaining character accepts its own reading", () => engine.Lines[0].Cells[3].State == CellState.Correct && engine.Mistypes == 0);
+            AddAssert("the recorder stores the new input rules", () => frames.Single(f => f.IsConfigExtended).JapaneseInputEra2);
+            AddAssert("skips and remaining readings replay exactly", reDerivedMatchesLive);
         }
 
         [TestCase("waoe")]
