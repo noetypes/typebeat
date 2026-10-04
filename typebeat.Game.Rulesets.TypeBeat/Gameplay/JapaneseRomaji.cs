@@ -56,6 +56,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 Match result = Match.Invalid;
                 foreach (var (length, spelling) in edges(kana, at, following))
                 {
+                    // A kana may allow both a consonant spelling and a vowel pronunciation
+                    // (を: wo/o, へ: he/e). Only the actual consonant can confirm a single n.
+                    if (kana[at] == 'ん' && spelling == "n" && typed + 1 < input.Length && !isConsonant(input[typed + 1]))
+                        continue;
                     int remaining = input.Length - typed;
                     int compare = Math.Min(remaining, spelling.Length);
                     if (!input.AsSpan(typed, compare).SequenceEqual(spelling.AsSpan(0, compare)))
@@ -111,6 +115,15 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                     foreach (string spelling in options)
                         yield return (length, spelling);
                 }
+            }
+
+            // Accept particle pronunciations alongside the literal kana spellings. These input
+            // aliases are separate from authored-romaji decoding so wa still decodes to わ.
+            switch (c)
+            {
+                case 'を': yield return (1, "o"); break;
+                case 'は': yield return (1, "wa"); break;
+                case 'へ': yield return (1, "e"); break;
             }
         }
 

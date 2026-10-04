@@ -49,6 +49,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         [TestCase("ん", "nn")]
         [TestCase("ん", "xn")]
         [TestCase("こーひー", "ko-hi-")]
+        [TestCase("を", "o")]
+        [TestCase("を", "wo")]
+        [TestCase("は", "wa")]
+        [TestCase("は", "ha")]
+        [TestCase("へ", "e")]
+        [TestCase("へ", "he")]
+        [TestCase("ほんを", "honwo")]
+        [TestCase("ほんを", "honno")]
+        [TestCase("ほんを", "hon'o")]
+        [TestCase("ほんへ", "honhe")]
+        [TestCase("ほんへ", "honne")]
+        [TestCase("ほんへ", "hon'e")]
         public void AcceptsImeSpellingsIncrementally(string kana, string input)
         {
             for (int i = 1; i < input.Length; i++)
@@ -62,6 +74,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         [TestCase("てんし", "tens")]
         [TestCase("しゃ", "sia")]
         [TestCase("まっちゃ", "makcha")]
+        [TestCase("ほんを", "hono")]
+        [TestCase("ほんへ", "hone")]
         public void DoesNotConvertIncompleteOrWrongReadings(string kana, string input)
             => Assert.That(JapaneseRomaji.Matches(kana, input) & JapaneseRomaji.Match.Complete, Is.EqualTo(JapaneseRomaji.Match.Invalid));
 
@@ -84,6 +98,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         [TestCase("月 と テンシ", "tsuki to tensi")]
         [TestCase("月　と　テンシ", "tsuki to tenshi")]
         [TestCase("コーヒー", "ko-hi-")]
+        [TestCase("はをへ", "waoe")]
+        [TestCase("はをへ", "hawohe")]
+        [TestCase("本を", "honwo")]
+        [TestCase("本を", "honno")]
+        [TestCase("本を", "hon'o")]
+        [TestCase("本へ", "honhe")]
+        [TestCase("本へ", "honne")]
+        [TestCase("本へ", "hon'e")]
         [TestCase("ｶﾞｯｺｳ", "gakkou")]
         [TestCase("ｷｬ", "kya")]
         [TestCase("本に", "honni")]
@@ -533,6 +555,20 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(engine.Mistypes, Is.Zero);
         }
 
+        [TestCase("本を", "hono")]
+        [TestCase("本へ", "hone")]
+        public void NasalBeforeAPronunciationVowelNeedsAnExplicitSecondN(string original, string input)
+        {
+            var engine = create(original);
+            foreach (char c in input)
+                engine.ProcessKey(c, 1200);
+            Assert.That(engine.Lines[0].Cells.All(c => c.State == CellState.Correct), Is.False);
+            Assert.That(engine.Mistypes, Is.GreaterThan(0));
+        }
+
+        [TestCase("wa", "わ")]
+        [TestCase("o", "お")]
+        [TestCase("e", "え")]
         [TestCase("jigokugoku!", "じごくごく")]
         [TestCase("(getsu)", "げつ")]
         [TestCase("ten'!", "てん")]

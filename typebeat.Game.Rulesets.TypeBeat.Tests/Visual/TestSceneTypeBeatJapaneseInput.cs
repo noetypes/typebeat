@@ -164,6 +164,21 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             AddAssert("denied spaces cannot desync the replay", reDerivedMatchesLive);
         }
 
+        [TestCase("waoe")]
+        [TestCase("hawohe")]
+        public void TestParticlePronunciationsThroughGameplayAndReplay(string input)
+        {
+            AddStep("Japanese particles fixture", () => testLine = new LyricLine
+            {
+                RawText = "hawohe", Original = "はをへ", StartTime = 0, EndTime = 600000, SingEndTime = 300000,
+                Units = new[] { new TimedUnit { Text = "hawohe", Original = "はをへ", StartTime = 0, EndTime = 300000 } },
+            });
+            load();
+            press(input);
+            AddAssert("phonetic or literal kana readings are accepted", () => engine.Lines[0].Cells.All(c => c.State == CellState.Correct) && engine.Mistypes == 0);
+            AddAssert("kana pronunciations replay exactly", reDerivedMatchesLive);
+        }
+
         [Test]
         public void TestPendingBackspaceAndFuriganaLayout()
         {

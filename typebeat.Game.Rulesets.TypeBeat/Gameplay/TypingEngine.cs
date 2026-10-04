@@ -1102,7 +1102,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             {
                 // A nasal's first n may also begin nn. The following consonant resolves that
                 // ambiguity without being lost: commit n at its own time, then process this key.
-                if ((JapaneseRomaji.Matches(group.Reading, japanesePending, plan.Following(group)) & JapaneseRomaji.Match.Complete) != 0)
+                // Inside the line, a vowel pronunciation alias still needs nn/n'; a word/line
+                // boundary can explicitly finish n before the next word's first vowel.
+                string following = plan.Following(group);
+                if ((JapaneseRomaji.Matches(group.Reading, japanesePending, following) & JapaneseRomaji.Match.Complete) != 0
+                    && (following.Length == 0 || char.IsWhiteSpace(following[0]) || lower is not ('a' or 'i' or 'u' or 'e' or 'o' or 'y')))
                 {
                     commitJapanese(group, japanesePendingTime);
                     return ProcessKey(c, time);
