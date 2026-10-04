@@ -75,10 +75,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 yield return (1, "xn");
                 yield return (1, "n'");
                 string next = at + 1 < kana.Length ? kana[(at + 1)..] : following;
-                // A single n is unambiguous only before a consonant other than y. Before a
-                // vowel, y, or the end, nn/n'/xn explicitly completes the nasal. The
-                // full path disambiguates n + na/ni/etc. (e.g. konnichiha).
-                if (next.Length > 0 && edges(next, 0, "").Any(e => isConsonant(e.Spelling[0])))
+                // At a word/line boundary n is complete but can still become nn. The engine
+                // keeps that ambiguity pending until the next key or an explicit confirmation.
+                // Inside a reading, vowels and y still need nn/n'/xn to disambiguate the nasal.
+                if (next.Length == 0 || char.IsWhiteSpace(next[0])
+                    || edges(next, 0, "").Any(e => isConsonant(e.Spelling[0])))
                     yield return (1, "n");
                 yield break;
             }

@@ -692,7 +692,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
         /// <summary>
         /// True while the player has put nothing into the active line yet (no cell behind the caret
-        /// is Correct or Wrong; leading auto-skipped punctuation does not count as progress). Used
+        /// is Correct or Wrong and no romaji is pending; leading auto-skipped punctuation does not
+        /// count as progress). Used
         /// by the key handler under <see cref="FletcherEnabled"/> to tell "parked on a line I have
         /// not started" from "typing it".
         /// </summary>
@@ -700,7 +701,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         {
             get
             {
-                if (activeLineIndex == -1)
+                if (activeLineIndex == -1 || JapanesePending.Length > 0)
                     return false;
 
                 var cells = lines[activeLineIndex].Cells;
@@ -1028,6 +1029,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             japanesePendingLine = japanesePendingCell = -1;
         }
 
+        private bool tryCommitJapanesePending()
+        {
+            if (!JapaneseRomajiInput || !UsesJapaneseRomaji || committingJapanese || JapanesePending.Length == 0)
+                return false;
+            var group = lines[activeLineIndex].JapaneseInput?.At(caretIndex);
+            // Space/Enter explicitly confirm a word, so a trailing n needs no next-letter lookahead.
+            if (group == null || (JapaneseRomaji.Matches(group.Reading, JapanesePending) & JapaneseRomaji.Match.Complete) == 0)
+                return false;
+            commitJapanese(group, japanesePendingTime);
+            return true;
+        }
+
         private bool? processJapaneseKey(char c, double time, TypingLine line)
         {
             if (!JapaneseRomajiInput || !UsesJapaneseRomaji || committingJapanese || MashingEnabled || line.Cells[caretIndex].IsFreestyle)
@@ -1036,13 +1049,27 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             if (japanesePendingLine != activeLineIndex || japanesePendingCell != caretIndex)
                 clearJapanesePending();
 
+            var plan = line.JapaneseInput;
+            if (c == ' ' && line.Cells[caretIndex].Expected != ' ' && plan?.IsRomanCell(caretIndex) == false)
+            {
+                int originalLine = activeLineIndex;
+                if (!tryCommitJapanesePending())
+                    return false; // An extra space neither skips Japanese nor discards a prefix.
+
+                // Confirmation may also supply a genuine lyric space or a manual newline. Never
+                // run it as a word skip on a cell the confirmation just moved the caret onto.
+                if (activeLineIndex == originalLine
+                    && (caretIndex >= line.Cells.Count || line.Cells[caretIndex].Expected == ' '))
+                    ProcessKey(' ', time);
+                return true;
+            }
+
             if (charMatches(c, line.Cells[caretIndex].Expected))
             {
                 clearJapanesePending();
                 return null; // Direct kana layouts and legacy committed characters still work.
             }
 
-            var plan = line.JapaneseInput;
             var group = plan?.At(caretIndex);
             if (group == null)
             {
@@ -1171,6 +1198,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// "Space to skip current word" (backlog 110), a local SETTING and not a mod, OFF by default.
         /// When on, a space pressed while the caret sits inside a word abandons the rest of that word
         /// and lands the caret on the word gap, so one bad character costs a word instead of the run.
+        /// Japanese romaji input restricts this gesture to literal Roman text; Japanese characters
+        /// refuse extra spaces or use them to confirm a completed reading.
         ///
         /// <para>What "abandons" means precisely, since backlog 167: every
         /// <see cref="CellState.Untyped"/> cell of that word enters
@@ -2308,6 +2337,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
             lastUpdateTime = time;
 
+            // A final n is already a complete reading. If no confirmation key arrives before the
+            // line ends, resolve it at its typed timestamp before sealing can turn it into a miss.
+            if (activeLineIndex >= 0 && time >= lines[activeLineIndex].EndTime)
+                tryCommitJapanesePending();
+
             // Whether the caret ends this update on a line it was not on when the update started.
             // Three things can move it (a drag cutoff inside the seal loop below, the ordinary
             // time-driven activation, and the flexible-lines snap), and all three announce through
@@ -2902,9 +2936,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// </summary>
         public bool ProcessEnter(double time)
         {
-            bool pending = JapanesePending.Length > 0;
-            clearJapanesePending();
-            return processEnter(time) || pending;
+            if (JapaneseRomajiInput && UsesJapaneseRomaji && JapanesePending.Length > 0)
+            {
+                int originalLine = activeLineIndex;
+                if (!tryCommitJapanesePending())
+                    return false;
+                // An IME-style confirmation never abandons the rest of this line, or the next
+                // line reached by automatic handoff. A complete manual line can still advance.
+                if (activeLineIndex == originalLine && IsLineComplete)
+                    processEnter(time);
+                return true;
+            }
+            return processEnter(time);
         }
 
         private bool processEnter(double time)
@@ -3119,6 +3162,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 // path below (same windows, points, combo, accuracy) and leaves the cell exactly as
                 // a normally typed space would.
                 cell = line.Cells[caretIndex];
+                // A Roman run in a mixed Japanese word stops at the next script. The skip's space
+                // is not a typo on that Japanese character (freestyle still accepts it normally).
+                if (JapaneseRomajiInput && UsesJapaneseRomaji && cell.Expected != ' ' && !cell.IsFreestyle
+                    && line.JapaneseInput?.IsRomanCell(caretIndex) == false)
+                    return true;
             }
 
             // STEP OVER A SPOILED GAP (backlog 184, see StrictSpaces): the caret is PARKED on a word
@@ -3628,11 +3676,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             // the "already resolved" test below instead of on an argument about where the caret can be.
             int start = caretIndex;
             int end = caretIndex;
+            var japanesePlan = JapaneseRomajiInput && UsesJapaneseRomaji ? lines[activeLineIndex].JapaneseInput : null;
+            bool canSkip(int index) => japanesePlan == null || !cells[index].IsTypeable || japanesePlan.IsRomanCell(index);
 
-            while (start > 0 && !isWordGap(cells[start - 1]) && !cells[start - 1].IsFreestyle)
+            while (start > 0 && !isWordGap(cells[start - 1]) && !cells[start - 1].IsFreestyle && canSkip(start - 1))
                 start--;
 
-            while (end < cells.Count && !isWordGap(cells[end]) && !cells[end].IsFreestyle)
+            while (end < cells.Count && !isWordGap(cells[end]) && !cells[end].IsFreestyle && canSkip(end))
                 end++;
 
             // A freestyle slot is a hard stop: skip only ordinary cells before it, then let

@@ -33,6 +33,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         private LyricStage stage => Player.ChildrenOfType<LyricStage>().Single();
         private LyricLineDisplay display => stage.DisplayAt(0)!;
         private LyricLine? testLine;
+        private LyricLine? nextTestLine;
         private EmulatedTextInput os => ((KeycapManualInputManager)InputManager).TextInput;
         private TypeBeatRulesetConfigManager config => (TypeBeatRulesetConfigManager)RulesetConfigs.GetConfigFor(new TypeBeatRuleset())!;
         private List<TypeBeatReplayFrame> frames => Player.GameplayState.Score.Replay.Frames.OfType<TypeBeatReplayFrame>().ToList();
@@ -40,7 +41,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
 
         public override void SetUpSteps()
         {
-            AddStep("reset lyric fixture", () => testLine = null);
+            AddStep("reset lyric fixture", () => { testLine = null; nextTestLine = null; });
             AddStep("word skipping off", () => config.SetValue(TypeBeatRulesetSetting.SpaceSkipsWord, false));
             AddStep("manual newlines off", () => config.SetValue(TypeBeatRulesetSetting.ManualNewlines, false));
             base.SetUpSteps();
@@ -58,6 +59,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                 Units = new[] { new TimedUnit { Text = "tsukitotenshi", Original = "月と天使", StartTime = 0, EndTime = 300000 } },
             };
             beatmap.HitObjects.Add(new TypeBeatHitObject { StartTime = 0, LineIndex = 0, Line = line, Granularity = TimingGranularity.Word });
+            if (nextTestLine != null)
+                beatmap.HitObjects.Add(new TypeBeatHitObject { StartTime = 0, LineIndex = 1, Line = nextTestLine, Granularity = TimingGranularity.Word });
             return beatmap;
         }
 
@@ -111,6 +114,54 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             press("tennshi");
             AddAssert("kanji, hiragana and katakana are correct", () => engine.Lines[0].Cells.All(c => c.State == CellState.Correct) && engine.Mistypes == 0);
             AddAssert("spaced or joined play replays exactly", reDerivedMatchesLive);
+        }
+
+        [TestCase("typing")]
+        [TestCase("space")]
+        [TestCase("enter")]
+        public void TestRepeatedTenWithManualNewlinesAndWordSkipping(string confirmation)
+        {
+            AddStep("manual newlines and word skipping on", () =>
+            {
+                config.SetValue(TypeBeatRulesetSetting.ManualNewlines, true);
+                config.SetValue(TypeBeatRulesetSetting.SpaceSkipsWord, true);
+                testLine = nextTestLine = new LyricLine
+                {
+                    RawText = "ten", Original = "天", StartTime = 0, EndTime = 600000, SingEndTime = 300000,
+                    Units = new[] { new TimedUnit { Text = "ten", Original = "天", StartTime = 0, EndTime = 300000 } },
+                };
+            });
+            load();
+            press("te");
+            AddStep("extra space during the reading", () => InputManager.Key(Key.Space));
+            AddAssert("extra space keeps the accepted prefix", () => engine.JapanesePending == "te" && engine.CaretIndex == 0 && engine.Mistypes == 0);
+            press("n");
+            AddAssert("single final n is pending confirmation", () => engine.JapanesePending == "ten");
+            if (confirmation == "typing")
+                press("t");
+            else
+                AddStep("confirm and move to the next line", () => InputManager.Key(confirmation == "space" ? Key.Space : Key.Enter));
+            AddAssert("first 天 is correct and next line is not skipped", () => engine.Lines[0].Cells.Single().State == CellState.Correct
+                && engine.ActiveLineIndex == 1 && engine.CaretIndex == 0 && engine.Lines[1].Cells.Single().State == CellState.Untyped && engine.Mistypes == 0);
+            press(confirmation == "typing" ? "enn" : "tenn");
+            AddAssert("both 天 are correct", () => engine.Lines.SelectMany(l => l.Cells).All(c => c.State == CellState.Correct) && engine.LiveAccuracy == 1);
+            AddAssert("confirmation and typed newline replay exactly", reDerivedMatchesLive);
+        }
+
+        [Test]
+        public void TestExtraSpacesDoNotSkipJapaneseWithWordSkippingEnabled()
+        {
+            AddStep("word skipping on", () => config.SetValue(TypeBeatRulesetSetting.SpaceSkipsWord, true));
+            load();
+            press("t");
+            AddStep("extra space in partial reading", () => InputManager.Key(Key.Space));
+            AddAssert("prefix is retained", () => engine.JapanesePending == "t" && engine.Mistypes == 0);
+            press("uki");
+            AddStep("extra space between Japanese characters", () => InputManager.Key(Key.Space));
+            AddAssert("next character stays untyped", () => engine.CaretIndex == 1 && engine.Lines[0].Cells[1].State == CellState.Untyped && engine.Mistypes == 0);
+            press("totenshi");
+            AddAssert("all Japanese remains correct", () => engine.Lines[0].Cells.All(c => c.State == CellState.Correct) && engine.LiveAccuracy == 1);
+            AddAssert("denied spaces cannot desync the replay", reDerivedMatchesLive);
         }
 
         [Test]
@@ -188,7 +239,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                 decoded.Time = legacy.Time;
                 ReplayEngineFeed.Apply(replayed, decoded);
             }
-            return engine.Lines[0].Cells.Zip(replayed.Lines[0].Cells).All(p => p.First.State == p.Second.State && p.First.TypedChar == p.Second.TypedChar && p.First.JudgedDelta == p.Second.JudgedDelta)
+            return engine.Lines.SelectMany(l => l.Cells).Zip(replayed.Lines.SelectMany(l => l.Cells)).All(p => p.First.State == p.Second.State && p.First.TypedChar == p.Second.TypedChar && p.First.JudgedDelta == p.Second.JudgedDelta)
                    && engine.Score == replayed.Score && engine.Mistypes == replayed.Mistypes && engine.Combo == replayed.Combo;
         }
     }

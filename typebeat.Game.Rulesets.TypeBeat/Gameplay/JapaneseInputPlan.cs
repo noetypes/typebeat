@@ -44,6 +44,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
         internal Group? At(int cell) => cell >= 0 && cell < cells.Length ? cells[cell] : null;
 
+        internal bool IsRomanCell(int cell)
+        {
+            if (cell < 0 || cell >= text.Length || char.IsSurrogate(text[cell]))
+                return false;
+            // Compatibility forms include fullwidth Roman letters/digits. Latin extensions remain
+            // literal Roman text too; the romaji used to type Japanese is not the lyric's script.
+            char c = JapaneseRomaji.Hiragana(text[cell].ToString())[0];
+            return c is >= '0' and <= '9' || char.IsLetter(c)
+                && (c <= '\u024f' || c is >= '\u1e00' and <= '\u1eff' or >= '\u2c60' and <= '\u2c7f'
+                    or >= '\ua720' and <= '\ua7ff' or >= '\uab30' and <= '\uab6f');
+        }
+
         internal string Following(Group group)
         {
             int next = group.EndCellExclusive;
@@ -157,7 +169,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             var kana = new StringBuilder();
             for (int at = 0; at < source.Length;)
             {
-                int length = at + 1 < source.Length && source[at + 1] is '\uff9e' or '\uff9f' or '\u3099' or '\u309a' ? 2 : 1;
+                int length = at + 1 < source.Length
+                             && (char.IsSurrogatePair(source, at) || source[at + 1] is '\uff9e' or '\uff9f' or '\u3099' or '\u309a') ? 2 : 1;
                 string normal = JapaneseRomaji.Hiragana(source.Substring(at, length));
                 kana.Append(normal);
                 foreach (char _ in normal)

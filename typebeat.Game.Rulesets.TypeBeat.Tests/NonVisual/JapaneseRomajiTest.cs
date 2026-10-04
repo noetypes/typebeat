@@ -78,6 +78,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         [TestCase("学校", "gakkou")]
         [TestCase("真っ赤", "makka")]
         [TestCase("月とカレー", "tukitokare-")]
+        [TestCase("天 つき", "ten tsuki")]
+        [TestCase("天 つき", "tenn tuki")]
         [TestCase("月 と テンシ", "tuki to tennshi")]
         [TestCase("月 と テンシ", "tsuki to tensi")]
         [TestCase("月　と　テンシ", "tsuki to tenshi")]
@@ -147,6 +149,190 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
                     Assert.That(plan.At(at), Is.Not.Null, $"Missing reading at {at}: {c}");
             }
             Assert.That(plan.Groups.First().Reading, Is.EqualTo("つき"));
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void TerminalNAllowsTypingTheNextJapaneseLineWithoutAnExtraN(bool skipping, bool manual)
+        {
+            var engine = repeatedTen(manual);
+            engine.SpaceSkipsWord = skipping;
+            foreach (char c in "ten")
+                engine.ProcessKey(c, 1030);
+            Assert.That(engine.ProcessKey('t', 1200), Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(engine.Lines[0].Cells.Single().State, Is.EqualTo(CellState.Correct));
+                Assert.That(engine.Lines[0].Cells.Single().JudgedDelta, Is.EqualTo(30));
+                Assert.That(engine.ActiveLineIndex, Is.EqualTo(1));
+                Assert.That(engine.JapanesePending, Is.EqualTo("t"));
+                Assert.That(engine.Mistypes, Is.Zero);
+                Assert.That(engine.LiveAccuracy, Is.EqualTo(1));
+            });
+            foreach (char c in "enn")
+                engine.ProcessKey(c, 1420);
+            Assert.That(engine.Lines.SelectMany(l => l.Cells).All(c => c.State == CellState.Correct), Is.True);
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void SpaceAndEnterConfirmTerminalNWithoutAbandoningEitherLine(bool enter, bool manual)
+        {
+            var engine = repeatedTen(manual);
+            engine.SpaceSkipsWord = true;
+            foreach (char c in "Ten")
+                engine.ProcessKey(c, 1030);
+            Assert.That(enter ? engine.ProcessEnter(1100) : engine.ProcessKey(' ', 1100), Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(engine.Lines[0].Cells.Single().State, Is.EqualTo(CellState.Correct));
+                Assert.That(engine.Lines[0].Cells.Single().JudgedDelta, Is.EqualTo(30));
+                Assert.That(engine.ActiveLineIndex, Is.EqualTo(1));
+                Assert.That(engine.CaretIndex, Is.Zero);
+                Assert.That(engine.Lines[1].Cells.Single().State, Is.EqualTo(CellState.Untyped));
+                Assert.That(engine.Mistypes, Is.Zero);
+                Assert.That(engine.LiveAccuracy, Is.EqualTo(1));
+                Assert.That(engine.JapanesePending, Is.Empty);
+            });
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void SpacesOnJapaneseTextAreDeniedAndKeepPendingInput(bool skipping, bool gatekeeper)
+        {
+            var engine = create("月と");
+            engine.SpaceSkipsWord = skipping;
+            engine.StrictSpaces = true;
+            engine.AllowWrongInput = !gatekeeper;
+            Assert.That(engine.ProcessKey(' ', 1000), Is.False);
+            engine.ProcessKey('t', 1010);
+            Assert.That(engine.ProcessKey(' ', 1020), Is.False);
+            Assert.That(engine.JapanesePending, Is.EqualTo("t"));
+            Assert.That(engine.ActiveLineUntouched, Is.False, "pending romaji is already typing on this line");
+            foreach (char c in "uki")
+                engine.ProcessKey(c, 1100);
+            Assert.That(engine.ProcessKey(' ', 1110), Is.False);
+            Assert.That(engine.CaretIndex, Is.EqualTo(1));
+            foreach (char c in "to")
+                engine.ProcessKey(c, 1200);
+            Assert.That(engine.Lines[0].Cells.All(c => c.State == CellState.Correct), Is.True);
+            Assert.That(engine.Mistypes, Is.Zero);
+            Assert.That(engine.LiveAccuracy, Is.EqualTo(1));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ConfirmingANasalInsideALineDoesNotSkipTheRemainingJapanese(bool enter)
+        {
+            var engine = create("本と");
+            engine.FletcherEnabled = true;
+            engine.SpaceSkipsWord = true;
+            foreach (char c in "hon")
+                engine.ProcessKey(c, 1030);
+            Assert.That(enter ? engine.ProcessEnter(1100) : engine.ProcessKey(' ', 1100), Is.True);
+            Assert.That(engine.Lines[0].Cells[0].State, Is.EqualTo(CellState.Correct));
+            Assert.That(engine.Lines[0].Cells[1].State, Is.EqualTo(CellState.Untyped));
+            Assert.That(engine.CaretIndex, Is.EqualTo(1));
+            foreach (char c in "to")
+                engine.ProcessKey(c, 1200);
+            Assert.That(engine.Lines[0].Cells.All(c => c.State == CellState.Correct), Is.True);
+            Assert.That(engine.Mistypes, Is.Zero);
+        }
+
+        [Test]
+        public void AConfirmationDoesNotSkipFollowingLatinCharactersInTheSameWord()
+        {
+            var engine = create("天abc");
+            engine.SpaceSkipsWord = true;
+            foreach (char c in "ten")
+                engine.ProcessKey(c, 1030);
+            Assert.That(engine.ProcessKey(' ', 1100), Is.True);
+            Assert.That(engine.CaretIndex, Is.EqualTo(1));
+            Assert.That(engine.Lines[0].Cells.Skip(1).All(c => c.State == CellState.Untyped), Is.True);
+            foreach (char c in "abc")
+                engine.ProcessKey(c, 1200);
+            Assert.That(engine.Lines[0].Cells.All(c => c.State == CellState.Correct), Is.True);
+            Assert.That(engine.Mistypes, Is.Zero);
+        }
+
+        [Test]
+        public void FreestyleStillAcceptsSpaceOnJapaneseMaps()
+        {
+            var engine = create("&");
+            engine.SpaceSkipsWord = true;
+            Assert.That(engine.ProcessKey(' ', 1100), Is.True);
+            Assert.That(engine.Lines[0].Cells.Single().State, Is.EqualTo(CellState.Correct));
+            Assert.That(engine.Lines[0].Cells.Single().TypedChar, Is.EqualTo(' '));
+        }
+
+        [TestCase("月")]
+        [TestCase("つ")]
+        [TestCase("ツ")]
+        [TestCase("、")]
+        [TestCase("!")]
+        [TestCase("α")]
+        [TestCase("Ж")]
+        public void SpaceToSkipDoesNotApplyToNonRomanCharactersOrPunctuation(string original)
+        {
+            var engine = new TypingEngine(map(original), literate: true, polyglot: true, polyglotLanguage: "japanese") { SpaceSkipsWord = true };
+            engine.Update(1000);
+            Assert.That(engine.ProcessKey(' ', 1100), Is.False);
+            Assert.That(engine.Lines[0].Cells.All(c => c.State == CellState.Untyped), Is.True);
+            Assert.That(engine.Mistypes, Is.Zero);
+        }
+
+        [TestCase("😀")]
+        [TestCase("𠀀")]
+        public void RomanScriptDetectionHandlesSupplementaryCharacters(string original)
+        {
+            var plan = JapaneseInputPlan.Create(original);
+            Assert.That(plan.IsRomanCell(0), Is.False);
+            Assert.That(plan.IsRomanCell(1), Is.False);
+        }
+
+        [Test]
+        public void SpaceToSkipCannotAbandonJapaneseInAMixedScriptWord()
+        {
+            var engine = create("abc月");
+            engine.SpaceSkipsWord = true;
+            Assert.That(engine.ProcessKey(' ', 1100), Is.True);
+            Assert.That(engine.CaretIndex, Is.EqualTo(3));
+            Assert.That(engine.Lines[0].Cells.Take(3).All(c => c.State == CellState.Abandoned), Is.True);
+            Assert.That(engine.Lines[0].Cells[3].State, Is.EqualTo(CellState.Untyped));
+            Assert.That(engine.Mistypes, Is.Zero);
+            foreach (char c in "tuki")
+                engine.ProcessKey(c, 1200);
+            Assert.That(engine.Lines[0].Cells[3].State, Is.EqualTo(CellState.Correct));
+        }
+
+        [TestCase("abc")]
+        [TestCase("ＡＢＣ")]
+        [TestCase("é")]
+        [TestCase("æ")]
+        public void SpaceToSkipStillAppliesToLiteralRomanTextOnJapaneseMaps(string original)
+        {
+            var engine = create(original);
+            engine.SpaceSkipsWord = true;
+            Assert.That(engine.ProcessKey(' ', 1100), Is.True);
+            Assert.That(engine.Lines[0].Cells.All(c => c.State == CellState.Abandoned), Is.True);
+        }
+
+        [Test]
+        public void TerminalNIsJudgedAtItsTypedTimeWhenTheLineSeals()
+        {
+            var engine = create("天");
+            foreach (char c in "ten")
+                engine.ProcessKey(c, 1030);
+            engine.Update(6000);
+            Assert.That(engine.Lines[0].Cells.Single().State, Is.EqualTo(CellState.Correct));
+            Assert.That(engine.Lines[0].Cells.Single().JudgedDelta, Is.EqualTo(30));
+            Assert.That(engine.BuildResults().Counts[JudgementType.Miss], Is.Zero);
         }
 
         [Test]
@@ -314,15 +500,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         }
 
         [Test]
-        public void CancellingPendingInputIsRecordedEvenWhenTheUnderlyingControlIsInert()
+        public void UnfinishedJapaneseReadingsSurviveDeniedConfirmationKeys()
         {
             var engine = create("月");
             engine.ProcessKey('t', 1100);
-            Assert.That(engine.ProcessEnter(1200), Is.True);
-            Assert.That(engine.JapanesePending, Is.Empty);
-            engine.ProcessKey('t', 1300);
-            Assert.That(engine.ProcessKey(' ', 1400), Is.True);
-            Assert.That(engine.JapanesePending, Is.Empty);
+            Assert.That(engine.ProcessEnter(1200), Is.False);
+            Assert.That(engine.JapanesePending, Is.EqualTo("t"));
+            Assert.That(engine.ProcessKey(' ', 1400), Is.False);
+            Assert.That(engine.JapanesePending, Is.EqualTo("t"));
             engine.JapaneseRomajiInput = false;
             Assert.That(engine.JapanesePending, Is.Empty);
         }
@@ -356,6 +541,33 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             var normal = new TypingEngine(map("月"));
             Assert.That(normal.UsesJapaneseRomaji, Is.False);
             Assert.That(normal.Lines[0].JapaneseInput, Is.Null);
+        }
+
+        private static TypingEngine repeatedTen(bool manual = true)
+        {
+            var beatmap = new LyricBeatmap
+            {
+                Metadata = map("天").Metadata, Granularity = TimingGranularity.Word,
+                Lines = new[]
+                {
+                    new LyricLine
+                    {
+                        RawText = "ten", Original = "天", StartTime = 0, EndTime = 1400, SingEndTime = 1300,
+                        Units = new[] { new TimedUnit { Text = "ten", Original = "天", StartTime = 1000, EndTime = 1300 } },
+                    },
+                    new LyricLine
+                    {
+                        RawText = "ten", Original = "天", StartTime = 1400, EndTime = 5000, SingEndTime = 1700,
+                        Units = new[] { new TimedUnit { Text = "ten", Original = "天", StartTime = 1400, EndTime = 1700 } },
+                    },
+                },
+            };
+            var engine = new TypingEngine(beatmap, polyglot: true, polyglotLanguage: "japanese")
+            {
+                FletcherEnabled = true, ManualNewlines = manual, NewlineOnTypedLetter = true, BoundedRush = true,
+            };
+            engine.Update(1000);
+            return engine;
         }
 
         private static TypingEngine create(string original, string language = "japanese")
