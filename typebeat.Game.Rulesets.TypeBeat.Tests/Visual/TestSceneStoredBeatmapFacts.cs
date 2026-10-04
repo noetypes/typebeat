@@ -89,6 +89,49 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             AddUntilStep("pass finished", () => processor.Finished);
         }
 
+        [Test]
+        public void BackgroundPassClassifiesMapsWithAlreadyStoredPace()
+        {
+            Guid id = Guid.Empty;
+            TestProcessor processor = null!;
+            AddStep("save freestyle map", () => id = save(new TypeBeatBeatmap
+            {
+                HitObjects = new List<TypeBeatHitObject>
+                {
+                    new TypeBeatHitObject
+                    {
+                        Granularity = TimingGranularity.Word,
+                        Line = new LyricLine
+                        {
+                            RawText = "hello &&&",
+                            StartTime = 0,
+                            EndTime = 4000,
+                            SingEndTime = 4000,
+                            Units = new[]
+                            {
+                                new TimedUnit { Text = "hello", StartTime = 0, EndTime = 2000, Source = TimingSource.Explicit },
+                                new TimedUnit { Text = "&&&", StartTime = 2000, EndTime = 4000, Source = TimingSource.Explicit },
+                            },
+                        },
+                    },
+                },
+            }));
+            AddAssert("save classified freestyle", () => realm.Run(r => r.Find<BeatmapInfo>(id)!.DifficultyTags.HasFlag(BeatmapDifficultyTags.Freestyle)));
+            AddStep("mark only tags unprocessed", () => realm.Write(r =>
+            {
+                // Keep the SR pass from resetting pace: this test must exercise the tags-only queue.
+                r.Find<RulesetInfo>("typebeat")!.LastAppliedDifficultyVersion = int.MaxValue;
+                var beatmap = r.Find<BeatmapInfo>(id)!;
+                beatmap.DifficultyTags = BeatmapDifficultyTags.None;
+                beatmap.DifficultyTagsVersion = 0;
+            }));
+            AddAssert("pace was already processed", () => stored(id).wpm >= 0);
+            AddStep("run background pass", () => Add(processor = new TestProcessor()));
+            AddUntilStep("tags backfilled", () => realm.Run(r => r.Find<BeatmapInfo>(id)!.DifficultyTagsVersion == StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION));
+            AddAssert("freestyle restored", () => realm.Run(r => r.Find<BeatmapInfo>(id)!.DifficultyTags.HasFlag(BeatmapDifficultyTags.Freestyle)));
+            AddUntilStep("pass finished", () => processor.Finished);
+        }
+
         private partial class TestProcessor : BackgroundDataStoreProcessor
         {
             public bool Finished => ProcessingTask.IsCompleted;

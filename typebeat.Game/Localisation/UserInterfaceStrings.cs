@@ -89,6 +89,9 @@ namespace typebeat.Game.Localisation
         /// </summary>
         public static LocalisableString ShowConverts => new TranslatableString(getKey(@"show_converts"), @"Show converts");
 
+        /// <summary>"Show tags"</summary>
+        public static LocalisableString ShowTags => new TranslatableString(getKey(@"show_tags"), @"Show tags");
+
         /// <summary>
         /// "Show converted beatmaps"
         /// </summary>

@@ -39,7 +39,8 @@ namespace typebeat.Game.Screens.Select
         private const float corner_radius = 10;
 
         private SongSelectSearchTextBox searchTextBox = null!;
-        private ShearedToggleButton showConvertedBeatmapsButton = null!;
+        private ShearedToggleButton showDifficultyTagsButton = null!;
+        private readonly BindableBool showConvertedBeatmaps = new BindableBool();
         private DifficultyRangeSlider difficultyRangeSlider = null!;
         private ShearedDropdown<SortMode> sortDropdown = null!;
         private ShearedDropdown<GroupModeDropdownItem> groupDropdown = null!;
@@ -148,12 +149,12 @@ namespace typebeat.Game.Screens.Select
                                                 MinRange = 0.1f,
                                             },
                                             Empty(),
-                                            showConvertedBeatmapsButton = new ShearedToggleButton
+                                            showDifficultyTagsButton = new ShearedToggleButton
                                             {
                                                 Anchor = Anchor.Centre,
                                                 Origin = Anchor.Centre,
                                                 AutoSizeAxes = Axes.X,
-                                                Text = UserInterfaceStrings.ShowConverts,
+                                                Text = UserInterfaceStrings.ShowTags,
                                                 Height = 30f,
                                             },
                                         },
@@ -212,7 +213,8 @@ namespace typebeat.Game.Screens.Select
 
             difficultyRangeSlider.LowerBound = config.GetBindable<double>(OsuSetting.DisplayStarsMinimum);
             difficultyRangeSlider.UpperBound = config.GetBindable<double>(OsuSetting.DisplayStarsMaximum);
-            config.BindWith(OsuSetting.ShowConvertedBeatmaps, showConvertedBeatmapsButton.Active);
+            config.BindWith(OsuSetting.ShowDifficultyTags, showDifficultyTagsButton.Active);
+            config.BindWith(OsuSetting.ShowConvertedBeatmaps, showConvertedBeatmaps);
             var savedSort = config.GetBindable<SortMode>(OsuSetting.SongSelectSortingMode);
             if (savedSort.Value == SortMode.BPM)
                 savedSort.Value = SortMode.Title;
@@ -250,7 +252,7 @@ namespace typebeat.Game.Screens.Select
             difficultyRangeSlider.LowerBound.BindValueChanged(_ => debouncedUpdateCriteria());
             difficultyRangeSlider.UpperBound.BindValueChanged(_ => debouncedUpdateCriteria());
 
-            showConvertedBeatmapsButton.Active.BindValueChanged(_ => updateCriteria());
+            showConvertedBeatmaps.BindValueChanged(_ => updateCriteria());
             sortDropdown.Current.BindValueChanged(_ => updateCriteria());
             groupDropdown.Current.BindValueChanged(_ => updateCriteria());
             collectionDropdown.Current.BindValueChanged(v =>
@@ -292,7 +294,7 @@ namespace typebeat.Game.Screens.Select
             {
                 Sort = sortDropdown.Current.Value,
                 Group = groupDropdown.Current.Value?.Value ?? GroupMode.None,
-                AllowConvertedBeatmaps = showConvertedBeatmapsButton.Active.Value,
+                AllowConvertedBeatmaps = showConvertedBeatmaps.Value,
                 Ruleset = ruleset.Value,
                 Mods = mods.Value,
                 Collection = collectionDropdown.Current.Value?.Collection,

@@ -21,6 +21,7 @@ using typebeat.Game.Rulesets;
 using typebeat.Game.Screens.Select;
 using typebeat.Game.Screens.Select.Filter;
 using typebeat.Game.Tests.Visual;
+using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
 
 namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
 {
@@ -68,11 +69,17 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                     {
                         DifficultyName = name,
                         BeatmapSet = set,
+                        StarRating = name == "Hard" ? 5 : 2,
+                        Status = BeatmapOnlineStatus.Ranked,
+                        DifficultyTags = name == "Hard" ? BeatmapDifficultyTags.Rhythm | BeatmapDifficultyTags.Stamina : BeatmapDifficultyTags.Freestyle | BeatmapDifficultyTags.Burst,
+                        DifficultyTagsVersion = StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION,
                     });
                 }
 
                 return r.Add(set).Detach();
             }));
+
+            AddStep("show tags", () => config.SetValue(OsuSetting.ShowDifficultyTags, true));
 
             AddStep("load song select", () => LoadScreen(songSelect = new SoloSongSelect()));
             AddUntilStep("song select loaded", () => songSelect.IsLoaded);
@@ -185,10 +192,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             AddAssert("standalone panel's only button is the update button",
                 () => standalonePanel.ChildrenOfType<OsuAnimatedButton>().All(b => b is PanelUpdateBeatmapButton));
 
-            AddAssert("set status row is pill then update button", () =>
+            AddAssert("set status row is status, tags, then update button", () =>
             {
                 var row = (FillFlowContainer)setPanel.ChildrenOfType<BeatmapSetOnlineStatusPill>().Single().Parent!;
-                return row.Children.Count == 2 && row.Children[0] is BeatmapSetOnlineStatusPill && row.Children[1] is PanelUpdateBeatmapButton;
+                return row.Children.Count == 3 && row.Children[0] is BeatmapSetOnlineStatusPill && row.Children[1] is BeatmapDifficultyTagsDisplay && row.Children[2] is PanelUpdateBeatmapButton;
             });
 
             AddAssert("standalone star row is the star rating alone", () =>
@@ -197,6 +204,73 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                 return row.Children.Count == 1;
             });
         }
+
+        [Test]
+        public void TagsFollowTheSelectedDifficultyAndToggleTogether()
+        {
+            BeatmapInfo normal = null!, hard = null!;
+            AddStep("get difficulty fixtures", () => { normal = beatmapSet.Beatmaps.First(); hard = beatmapSet.Beatmaps.Last(); });
+            AddAssert("set uses selected or hardest difficulty", () => tagsOf(setPanel).Tags == (Beatmap.Value.BeatmapInfo.ID == normal.ID ? normal : hard).DifficultyTags);
+            AddAssert("standalone uses its difficulty", () => tagsOf(standalonePanel).Tags == normal.DifficultyTags);
+            AddStep("select normal", () => Beatmap.Value = CreateWorkingBeatmap(new TypeBeatBeatmap { BeatmapInfo = normal }));
+            AddUntilStep("set tags follow normal", () => tagsOf(setPanel).Tags == normal.DifficultyTags);
+            AddUntilStep("title tags follow normal", () => tagsOf(songSelect.ChildrenOfType<BeatmapTitleWedge>().Single()).Tags == normal.DifficultyTags);
+            AddStep("select hard", () => Beatmap.Value = CreateWorkingBeatmap(new TypeBeatBeatmap { BeatmapInfo = hard }));
+            AddUntilStep("set tags follow hard", () => tagsOf(setPanel).Tags == hard.DifficultyTags);
+            AddUntilStep("title tags follow hard", () => tagsOf(songSelect.ChildrenOfType<BeatmapTitleWedge>().Single()).Tags == hard.DifficultyTags);
+            AddStep("hide tags", () => config.SetValue(OsuSetting.ShowDifficultyTags, false));
+            AddUntilStep("all tag rows hidden", () => tagsOf(setPanel).Alpha == 0 && tagsOf(standalonePanel).Alpha == 0 && tagsOf(songSelect.ChildrenOfType<BeatmapTitleWedge>().Single()).Alpha == 0);
+            AddStep("show tags", () => config.SetValue(OsuSetting.ShowDifficultyTags, true));
+            AddUntilStep("all tag rows shown", () => tagsOf(setPanel).Alpha == 1 && tagsOf(standalonePanel).Alpha == 1 && tagsOf(songSelect.ChildrenOfType<BeatmapTitleWedge>().Single()).Alpha == 1);
+        }
+
+        [Test]
+        public void ShowTagsButtonControlsVisibility()
+        {
+            ShearedToggleButton button = null!;
+            bool converts = false;
+            AddStep("find show tags button", () =>
+            {
+                button = songSelect.ChildrenOfType<FilterControl>().Single().ChildrenOfType<ShearedToggleButton>().Single(b => b.Text.ToString() == "Show tags");
+                converts = config.Get<bool>(OsuSetting.ShowConvertedBeatmaps);
+            });
+            AddStep("collect transient bindables", () => { GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect(); });
+            AddUntilStep("button loaded and ready", () => button.Active.Value && button.Action != null);
+            AddStep("toggle off", () => button.Action!.Invoke());
+            AddAssert("button disabled tags in config", () => !config.Get<bool>(OsuSetting.ShowDifficultyTags));
+            AddUntilStep("tag row hidden", () => tagsOf(standalonePanel).Alpha == 0);
+            AddAssert("converts setting unchanged", () => config.Get<bool>(OsuSetting.ShowConvertedBeatmaps) == converts);
+            AddAssert("conversion filtering unchanged", () => songSelect.ChildrenOfType<FilterControl>().Single().CreateCriteria().AllowConvertedBeatmaps == converts);
+            AddStep("toggle on", () => button.Action?.Invoke());
+            AddUntilStep("tag row shown", () => tagsOf(standalonePanel).Alpha == 1);
+        }
+
+        [Test]
+        public void TagsPushUpdateButtonToTheRight()
+        {
+            float setX = 0, standaloneX = 0;
+            AddStep("show update buttons", () =>
+            {
+                foreach (var button in new[] { setPanel.ChildrenOfType<PanelUpdateBeatmapButton>().Single(), standalonePanel.ChildrenOfType<PanelUpdateBeatmapButton>().Single() })
+                {
+                    button.FinishTransforms();
+                    button.Alpha = 1;
+                }
+            });
+            AddUntilStep("tag rows have a width", () => tagsOf(setPanel).DrawWidth > 0 && tagsOf(standalonePanel).DrawWidth > 0);
+            AddStep("record update positions", () =>
+            {
+                setX = setPanel.ChildrenOfType<PanelUpdateBeatmapButton>().Single().X;
+                standaloneX = standalonePanel.ChildrenOfType<PanelUpdateBeatmapButton>().Single().X;
+            });
+            AddAssert("tags follow status", () => tagsOf(setPanel).X >= setPanel.ChildrenOfType<BeatmapSetOnlineStatusPill>().Single().DrawWidth);
+            AddAssert("update follows tags", () => setX >= tagsOf(setPanel).X + tagsOf(setPanel).DrawWidth && standaloneX >= tagsOf(standalonePanel).X + tagsOf(standalonePanel).DrawWidth);
+            AddStep("hide tags", () => config.SetValue(OsuSetting.ShowDifficultyTags, false));
+            AddUntilStep("buttons reclaim tag width", () => setPanel.ChildrenOfType<PanelUpdateBeatmapButton>().Single().X < setX && standalonePanel.ChildrenOfType<PanelUpdateBeatmapButton>().Single().X < standaloneX);
+            AddStep("show tags", () => config.SetValue(OsuSetting.ShowDifficultyTags, true));
+        }
+
+        private static BeatmapDifficultyTagsDisplay tagsOf(Drawable drawable) => drawable.ChildrenOfType<BeatmapDifficultyTagsDisplay>().Single();
 
         private string? groupOfSet()
         {

@@ -55,6 +55,7 @@ namespace typebeat.Game.Configuration
             SetDefault(OsuSetting.BeatmapDetailModsFilter, false);
 
             SetDefault(OsuSetting.ShowConvertedBeatmaps, true);
+            SetDefault(OsuSetting.ShowDifficultyTags, true);
             SetDefault(OsuSetting.DisplayStarsMinimum, 0.0, 0, 10, 0.1);
             SetDefault(OsuSetting.DisplayStarsMaximum, 10.1, 0, 10.1, 0.1);
 
@@ -403,6 +404,7 @@ namespace typebeat.Game.Configuration
         Version,
         ShowFirstRunSetup,
         ShowConvertedBeatmaps,
+        ShowDifficultyTags,
         Skin,
         ScreenshotFormat,
         ScreenshotCaptureMenuCursor,

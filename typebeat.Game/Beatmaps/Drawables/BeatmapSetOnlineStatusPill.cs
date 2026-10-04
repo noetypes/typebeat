@@ -5,19 +5,16 @@ using osu.Framework.Allocation;
 using osu.Framework.Extensions;
 using osu.Framework.Extensions.LocalisationExtensions;
 using osu.Framework.Graphics;
-using osu.Framework.Graphics.Containers;
 using osu.Framework.Graphics.Cursor;
-using osu.Framework.Graphics.Shapes;
 using osu.Framework.Localisation;
 using typebeat.Game.Graphics;
-using typebeat.Game.Graphics.Sprites;
 using typebeat.Game.Localisation;
 using typebeat.Game.Overlays;
 using osuTK.Graphics;
 
 namespace typebeat.Game.Beatmaps.Drawables
 {
-    public partial class BeatmapSetOnlineStatusPill : CircularContainer, IHasTooltip
+    public partial class BeatmapSetOnlineStatusPill : BeatmapPill, IHasTooltip
     {
         /// <summary>
         /// Whether to show <see cref="BeatmapOnlineStatus.None"/> as "unknown" instead of fading out.
@@ -46,19 +43,6 @@ namespace typebeat.Game.Beatmaps.Drawables
 
         private BeatmapOnlineStatus status;
 
-        public float TextSize
-        {
-            init => statusText.Font = statusText.Font.With(size: value);
-        }
-
-        public MarginPadding TextPadding
-        {
-            init => statusText.Padding = value;
-        }
-
-        private readonly OsuSpriteText statusText;
-        private readonly Box background;
-
         private const double animation_duration = 400;
 
         [Resolved]
@@ -69,28 +53,9 @@ namespace typebeat.Game.Beatmaps.Drawables
 
         public BeatmapSetOnlineStatusPill()
         {
-            AutoSizeAxes = Axes.Both;
-            Masking = true;
-
             Alpha = 0;
 
-            Children = new Drawable[]
-            {
-                background = new Box
-                {
-                    RelativeSizeAxes = Axes.Both,
-                    Colour = Color4.Black,
-                },
-                statusText = new OsuSpriteText
-                {
-                    Anchor = Anchor.Centre,
-                    Origin = Anchor.Centre,
-                    Font = OsuFont.GetFont(weight: FontWeight.Bold)
-                },
-            };
-
             Status = BeatmapOnlineStatus.None;
-            TextPadding = new MarginPadding { Horizontal = 4, Bottom = 1 };
         }
 
         protected override void LoadComplete()
@@ -134,10 +99,10 @@ namespace typebeat.Game.Beatmaps.Drawables
             else
                 statusTextColour = status == BeatmapOnlineStatus.Graveyard ? colours.GreySeaFoamLight : Color4.Black;
 
-            statusText.FadeColour(statusTextColour, duration, Easing.OutQuint);
-            background.FadeColour(OsuColour.ForBeatmapSetOnlineStatus(Status) ?? colourProvider?.Light1 ?? colours.GreySeaFoamLighter, duration, Easing.OutQuint);
+            PillText.FadeColour(statusTextColour, duration, Easing.OutQuint);
+            Background.FadeColour(OsuColour.ForBeatmapSetOnlineStatus(Status) ?? colourProvider?.Light1 ?? colours.GreySeaFoamLighter, duration, Easing.OutQuint);
 
-            statusText.Text = Status.GetLocalisableDescription().ToUpper();
+            PillText.Text = Status.GetLocalisableDescription().ToUpper();
         }
 
         public LocalisableString TooltipText

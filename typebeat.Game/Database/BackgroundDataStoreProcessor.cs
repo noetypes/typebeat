@@ -232,7 +232,7 @@ namespace typebeat.Game.Database
         }
 
         /// <summary>
-        /// Fills <see cref="BeatmapInfo.TargetWpm"/> and <see cref="BeatmapInfo.HasIntroBeatdrop"/> on every row still
+        /// Fills typing pace, intro beatdrops and difficulty tags on every row still
         /// marked unprocessed (see <see cref="StoredBeatmapFacts"/>): a library that predates realm schema 59 or 60, or a
         /// map whose facts failed to compute last time. Also heals the row's file-backed metadata from the same decode
         /// (<see cref="StoredBeatmapFacts.StampFileMetadata"/>). Strictly local, like the star rating pass above.
@@ -245,7 +245,7 @@ namespace typebeat.Game.Database
 
             realmAccess.Run(r =>
             {
-                foreach (var b in r.All<BeatmapInfo>().Where(b => b.TargetWpm < 0 && b.BeatmapSet != null))
+                foreach (var b in r.All<BeatmapInfo>().Where(b => (b.TargetWpm < 0 || b.DifficultyTagsVersion < StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION) && b.BeatmapSet != null))
                     beatmapIds.Add(b.ID);
             });
 
@@ -254,7 +254,7 @@ namespace typebeat.Game.Database
 
             Logger.Log($"Found {beatmapIds.Count} beatmaps which require typing fact processing.");
 
-            var notification = showProgressNotification(beatmapIds.Count, "Measuring typing pace for beatmaps", "beatmaps' typing pace has been measured");
+            var notification = showProgressNotification(beatmapIds.Count, "Processing map facts and tags", "map facts and tags have been processed");
 
             int processedCount = 0;
             int failedCount = 0;
@@ -282,6 +282,7 @@ namespace typebeat.Game.Database
                         throw new InvalidOperationException("beatmap file could not be read");
 
                     var (targetWpm, hasIntroBeatdrop) = StoredBeatmapFacts.Compute(working);
+                    var tags = StoredBeatmapFacts.ComputeDifficultyTags(working);
                     var fileMetadata = working.Beatmap.Metadata;
                     bool metadataChanged = false;
 
@@ -293,6 +294,8 @@ namespace typebeat.Game.Database
                             metadataChanged = StoredBeatmapFacts.StampFileMetadata(liveBeatmapInfo.Metadata, fileMetadata);
                             liveBeatmapInfo.TargetWpm = targetWpm;
                             liveBeatmapInfo.HasIntroBeatdrop = hasIntroBeatdrop;
+                            liveBeatmapInfo.DifficultyTags = tags;
+                            liveBeatmapInfo.DifficultyTagsVersion = StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION;
 
                             if (NeedsOnlineLanguage(liveBeatmapInfo))
                                 liveBeatmapInfo.LastOnlineUpdate = null;

@@ -50,6 +50,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
     /// </summary>
     internal static class ChunkedEndurance
     {
+        internal const double short_profile_seconds = 5;
+        internal const double sustained_profile_seconds = 20;
+
         internal const string merge_off = "off";
         internal const string merge_pairs = "pairs";
         internal const string merge_runs = "runs";
@@ -359,6 +362,15 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             /// and for a test that has to see how far a merge actually spread.
             /// </summary>
             public required IReadOnlyList<Chunk> Chunks { get; init; }
+
+            /// <summary>Peak SR strain in short windows, for content tags; does not change the rating.</summary>
+            public double ShortWindowPeak { get; init; }
+
+            /// <summary>Peak SR strain in fully supported windows longer than the short profile.</summary>
+            public double LongerWindowPeak { get; init; }
+
+            /// <summary>Peak SR strain in fully supported sustained windows, for content tags.</summary>
+            public double SustainedWindowPeak { get; init; }
         }
 
         /// <summary>One chunk of the layout, in playback milliseconds from the map's first word.</summary>
@@ -783,6 +795,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             bool overlapping = settings.chunk_profile == profile_overlapping;
             List<Row>? overlappingRows = null;
 
+            double shortWindowPeak = 0, longerWindowPeak = 0, sustainedWindowPeak = 0;
+
             if (overlapping)
             {
                 double mapEnd = t0;
@@ -819,6 +833,16 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                         {
                             double from = centre - duration * position, to = from + duration;
                             double value = ChunkStrain(from, to, true);
+
+                            if (duration / 1000 <= short_profile_seconds)
+                                shortWindowPeak = Math.Max(shortWindowPeak, value);
+                            if (from >= t0 && to <= mapEnd)
+                            {
+                                if (duration / 1000 > short_profile_seconds)
+                                    longerWindowPeak = Math.Max(longerWindowPeak, value);
+                                if (duration / 1000 >= sustained_profile_seconds)
+                                    sustainedWindowPeak = Math.Max(sustainedWindowPeak, value);
+                            }
 
                             if (value > strain)
                             {
@@ -1489,6 +1513,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 Load = load.Total,
                 Stars = envelopeStars,
                 RhythmMultiplier = noRhythmStars > 0 ? envelopeStars / noRhythmStars : 1,
+                ShortWindowPeak = shortWindowPeak,
+                LongerWindowPeak = longerWindowPeak,
+                SustainedWindowPeak = sustainedWindowPeak,
                 Chunks = rows.Select(row => new Chunk(row.A, row.B, row.Strain, row.Plain, row.Merged, row.Sealed)).ToArray(),
             };
         }

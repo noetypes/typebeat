@@ -113,6 +113,19 @@ namespace typebeat.Game.Beatmaps
         /// </summary>
         public bool HasIntroBeatdrop { get; set; }
 
+        [MapTo("DifficultyTags")]
+        public int DifficultyTagsInt { get; set; }
+
+        [Ignored]
+        public BeatmapDifficultyTags DifficultyTags
+        {
+            get => (BeatmapDifficultyTags)DifficultyTagsInt;
+            set => DifficultyTagsInt = (int)value;
+        }
+
+        /// <summary>Zero until the local map has been classified, including libraries predating tags.</summary>
+        public int DifficultyTagsVersion { get; set; }
+
         [Indexed]
         public string MD5Hash { get; set; } = string.Empty;
 

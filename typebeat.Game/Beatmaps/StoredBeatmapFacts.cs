@@ -8,8 +8,8 @@ using typebeat.Game.Rulesets.Mods;
 namespace typebeat.Game.Beatmaps
 {
     /// <summary>
-    /// Two facts about a difficulty that live in its FILE but are stored on its realm row
-    /// (<see cref="BeatmapInfo.TargetWpm"/> and <see cref="BeatmapInfo.HasIntroBeatdrop"/>, realm schema 59), so song
+    /// Facts about a difficulty that live in its FILE but are stored on its realm row
+    /// (<see cref="BeatmapInfo.TargetWpm"/>, <see cref="BeatmapInfo.HasIntroBeatdrop"/> and <see cref="BeatmapInfo.DifficultyTags"/>), so song
     /// select can group the whole library by them without decoding a single map.
     /// </summary>
     /// <remarks>
@@ -45,6 +45,13 @@ namespace typebeat.Game.Beatmaps
         /// </summary>
         public const double UNPROCESSED = -1;
 
+        /// <summary>Bump when classification changes to refresh cached tags in existing libraries.</summary>
+        public const int DIFFICULTY_TAGS_VERSION = 1;
+
+        public static BeatmapDifficultyTags ComputeDifficultyTags(IWorkingBeatmap working)
+            => (working.GetPlayableBeatmap(working.BeatmapInfo.Ruleset, Array.Empty<Mod>()) as IHasDifficultyTags)?.GetDifficultyTags()
+               ?? BeatmapDifficultyTags.None;
+
         /// <summary>
         /// Whether a row's stored facts can be trusted. See the class remarks.
         /// </summary>
@@ -69,7 +76,7 @@ namespace typebeat.Game.Beatmaps
         }
 
         /// <summary>
-        /// Writes both facts onto <paramref name="beatmap"/> (a live realm row inside a write, or a detached copy),
+        /// Writes all facts onto <paramref name="beatmap"/> (a live realm row inside a write, or a detached copy),
         /// after stamping the file's own metadata onto it (<see cref="StampFileMetadata"/>). The stamp goes first so
         /// that a map whose facts fail to compute still gets its declared language.
         /// </summary>
@@ -78,9 +85,12 @@ namespace typebeat.Game.Beatmaps
             StampFileMetadata(beatmap.Metadata, working.Beatmap.Metadata);
 
             var (targetWpm, hasIntroBeatdrop) = Compute(working);
+            var tags = ComputeDifficultyTags(working);
 
             beatmap.TargetWpm = targetWpm;
             beatmap.HasIntroBeatdrop = hasIntroBeatdrop;
+            beatmap.DifficultyTags = tags;
+            beatmap.DifficultyTagsVersion = DIFFICULTY_TAGS_VERSION;
         }
 
         /// <summary>

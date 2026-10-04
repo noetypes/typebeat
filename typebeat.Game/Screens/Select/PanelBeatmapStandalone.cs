@@ -61,6 +61,7 @@ namespace typebeat.Game.Screens.Select
         private OsuSpriteText artistText = null!;
         private PanelUpdateBeatmapButton updateButton = null!;
         private BeatmapSetOnlineStatusPill statusPill = null!;
+        private BeatmapDifficultyTagsDisplay difficultyTags = null!;
 
         private ConstrainedIconContainer difficultyIcon = null!;
         private StarRatingDisplay starRatingDisplay = null!;
@@ -148,6 +149,12 @@ namespace typebeat.Game.Screens.Select
                                             TextSize = OsuFont.Style.Caption2.Size,
                                             Margin = new MarginPadding { Right = 4f },
                                         },
+                                        difficultyTags = new BeatmapDifficultyTagsDisplay
+                                        {
+                                            Origin = Anchor.CentreLeft,
+                                            Anchor = Anchor.CentreLeft,
+                                            Margin = new MarginPadding { Right = 5f },
+                                        },
                                         updateButton = new PanelUpdateBeatmapButton
                                         {
                                             Scale = new Vector2(0.8f),
@@ -225,6 +232,7 @@ namespace typebeat.Game.Screens.Select
             artistText.Text = new RomanisableString(beatmapSet.Metadata.ArtistUnicode, beatmapSet.Metadata.Artist);
             updateButton.BeatmapSet = beatmapSet;
             statusPill.Status = beatmap.Status;
+            difficultyTags.Tags = beatmap.DifficultyTags;
 
             difficultyIcon.Icon = beatmap.Ruleset.CreateInstance().CreateIcon();
             difficultyIcon.Show();

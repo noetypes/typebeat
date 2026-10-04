@@ -15,7 +15,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
     /// WPM/CPM, average word length) which song select's statistics display computes live from the
     /// hit objects, always correct, never stale realm data.
     /// </summary>
-    public class TypeBeatBeatmap : Beatmap<TypeBeatHitObject>, IHasTypingPace
+    public class TypeBeatBeatmap : Beatmap<TypeBeatHitObject>, IHasTypingPace, IHasDifficultyTags
     {
         /// <summary>Display normalisation caps for the statistic bars.</summary>
         private const float max_display_wpm = 150;
@@ -74,6 +74,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 AverageWpm = pace.AverageWpm,
             };
         }
+
+        public BeatmapDifficultyTags GetDifficultyTags() => DifficultyTagClassifier.Compute(HitObjects.Select(h => h.Line));
 
         public override IEnumerable<BeatmapStatistic> GetStatistics()
         {

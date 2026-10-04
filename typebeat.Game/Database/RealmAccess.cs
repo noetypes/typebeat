@@ -152,7 +152,8 @@ namespace typebeat.Game.Database
         ///                    offer never cleared. A scalar recorded at import/update and backfilled here is
         ///                    copied by the detach mapper, so the carousel sees the real value.
         /// </summary>
-        private const int schema_version = 64;
+        // 65: cached content difficulty tags; the default version 0 queues existing maps for classification.
+        private const int schema_version = 65;
 
         /// <summary>
         /// Lock object which is held during <see cref="BlockAllOperations"/> sections, blocking realm retrieval during blocking periods.

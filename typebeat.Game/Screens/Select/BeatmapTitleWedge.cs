@@ -12,6 +12,7 @@ using osu.Framework.Extensions;
 using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
 using osu.Framework.Localisation;
+using osu.Framework.Logging;
 using typebeat.Game.Beatmaps;
 using typebeat.Game.Beatmaps.Drawables;
 using typebeat.Game.Configuration;
@@ -53,6 +54,7 @@ namespace typebeat.Game.Screens.Select
         private ModSettingChangeTracker? settingChangeTracker;
 
         private BeatmapSetOnlineStatusPill statusPill = null!;
+        private BeatmapDifficultyTagsDisplay difficultyTags = null!;
         private OsuHoverContainer titleLink = null!;
         private MarqueeContainer titleLabel = null!;
         private OsuHoverContainer artistLink = null!;
@@ -104,12 +106,28 @@ namespace typebeat.Game.Screens.Select
                     Spacing = new Vector2(0f, 4f),
                     Children = new Drawable[]
                     {
-                        new ShearAligningWrapper(statusPill = new BeatmapSetOnlineStatusPill
+                        new ShearAligningWrapper(new FillFlowContainer
                         {
                             Shear = -OsuGame.SHEAR,
-                            ShowUnknownStatus = true,
-                            TextSize = OsuFont.Style.Caption1.Size,
-                            TextPadding = new MarginPadding { Horizontal = 6, Vertical = 1 },
+                            AutoSizeAxes = Axes.Both,
+                            Direction = FillDirection.Horizontal,
+                            Spacing = new Vector2(5, 0),
+                            Children = new Drawable[]
+                            {
+                                statusPill = new BeatmapSetOnlineStatusPill
+                                {
+                                    ShowUnknownStatus = true,
+                                    TextSize = OsuFont.Style.Caption1.Size,
+                                    TextPadding = new MarginPadding { Horizontal = 6, Vertical = 1 },
+                                },
+                                difficultyTags = new BeatmapDifficultyTagsDisplay
+                                {
+                                    Anchor = Anchor.CentreLeft,
+                                    Origin = Anchor.CentreLeft,
+                                    TextSize = OsuFont.Style.Caption1.Size,
+                                    TextPadding = new MarginPadding { Horizontal = 6, Vertical = 1 },
+                                },
+                            },
                         }),
                         new ShearAligningWrapper(new Container
                         {
@@ -216,6 +234,7 @@ namespace typebeat.Game.Screens.Select
             var beatmapInfo = working.Value.BeatmapInfo;
 
             statusPill.Status = beatmapInfo.Status;
+            updateDifficultyTags();
 
             var titleText = new RomanisableString(metadata.TitleUnicode, metadata.Title);
             titleLabel.CreateContent = () => new OsuSpriteText
@@ -239,6 +258,40 @@ namespace typebeat.Game.Screens.Select
 
             updateLengthStatistic();
             updateOnlineDisplay();
+        }
+
+        private CancellationTokenSource? difficultyTagsCancellationSource;
+
+        private void updateDifficultyTags()
+        {
+            difficultyTagsCancellationSource?.Cancel();
+            difficultyTagsCancellationSource?.Dispose();
+            difficultyTagsCancellationSource = null;
+            var current = working.Value;
+            difficultyTags.Tags = current.BeatmapInfo.DifficultyTags;
+            if (current is DummyWorkingBeatmap || current.BeatmapInfo.DifficultyTagsVersion >= StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION)
+                return;
+
+            difficultyTagsCancellationSource = new CancellationTokenSource();
+            var token = difficultyTagsCancellationSource.Token;
+            Task.Run(() =>
+            {
+                BeatmapDifficultyTags tags;
+                try
+                {
+                    tags = StoredBeatmapFacts.ComputeDifficultyTags(current);
+                }
+                catch (Exception e)
+                {
+                    Logger.Log($"Failed to classify {current.BeatmapInfo}: {e.Message}");
+                    return;
+                }
+                Schedule(() =>
+                {
+                    if (!token.IsCancellationRequested && working.Value == current)
+                        difficultyTags.Tags = tags;
+                });
+            }, token);
         }
 
         private CancellationTokenSource? lengthCancellationSource;
@@ -323,6 +376,8 @@ namespace typebeat.Game.Screens.Select
 
         protected override void Dispose(bool isDisposing)
         {
+            difficultyTagsCancellationSource?.Cancel();
+            difficultyTagsCancellationSource?.Dispose();
             onlineDisplayCancellationSource?.Dispose();
             onlineDisplayCancellationSource = null;
             base.Dispose(isDisposing);

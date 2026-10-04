@@ -48,6 +48,7 @@ namespace typebeat.Game.Screens.Select
         private Drawable chevronIcon = null!;
         private PanelUpdateBeatmapButton updateButton = null!;
         private BeatmapSetOnlineStatusPill statusPill = null!;
+        private BeatmapDifficultyTagsDisplay difficultyTags = null!;
 
         [Resolved]
         private OverlayColourProvider colourProvider { get; set; } = null!;
@@ -69,6 +70,9 @@ namespace typebeat.Game.Screens.Select
 
         [Resolved]
         private IBindable<RulesetInfo> ruleset { get; set; } = null!;
+
+        [Resolved]
+        private IBindable<WorkingBeatmap> selectedBeatmap { get; set; } = null!;
 
         private GroupedBeatmapSet groupedBeatmapSet
         {
@@ -145,6 +149,12 @@ namespace typebeat.Game.Screens.Select
                                     Margin = new MarginPadding { Right = 5f },
                                     Animated = false,
                                 },
+                                difficultyTags = new BeatmapDifficultyTagsDisplay
+                                {
+                                    Origin = Anchor.CentreLeft,
+                                    Anchor = Anchor.CentreLeft,
+                                    Margin = new MarginPadding { Right = 5f },
+                                },
                                 updateButton = new PanelUpdateBeatmapButton
                                 {
                                     Anchor = Anchor.CentreLeft,
@@ -162,6 +172,7 @@ namespace typebeat.Game.Screens.Select
         {
             base.LoadComplete();
 
+            selectedBeatmap.BindValueChanged(_ => updateDifficultyTags());
             Expanded.BindValueChanged(_ => onExpanded(), true);
             KeyboardSelected.BindValueChanged(k => KeyboardSelected.Value = k.NewValue, true);
         }
@@ -195,6 +206,17 @@ namespace typebeat.Game.Screens.Select
             artistText.Text = new RomanisableString(beatmapSet.Metadata.ArtistUnicode, beatmapSet.Metadata.Artist);
             updateButton.BeatmapSet = beatmapSet;
             statusPill.Status = beatmapSet.Status;
+            updateDifficultyTags();
+        }
+
+        private void updateDifficultyTags()
+        {
+            if (Item == null)
+                return;
+
+            var set = groupedBeatmapSet.BeatmapSet;
+            var selected = set.Beatmaps.FirstOrDefault(b => b.ID == selectedBeatmap.Value.BeatmapInfo.ID);
+            difficultyTags.Tags = (selected ?? set.Beatmaps.MaxBy(b => b.StarRating))?.DifficultyTags ?? BeatmapDifficultyTags.None;
         }
 
         protected override void FreeAfterUse()
