@@ -533,6 +533,51 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(engine.Mistypes, Is.Zero);
         }
 
+        [TestCase("jigokugoku!", "じごくごく")]
+        [TestCase("(getsu)", "げつ")]
+        [TestCase("ten'!", "てん")]
+        [TestCase("ko-hi-!", "こーひー")]
+        public void AuthoredReadingsKeepImeMarkersAndIgnoreBoundaryPunctuation(string spelling, string expected)
+            => Assert.That(JapaneseRomaji.ReadAuthored(spelling), Is.EqualTo(expected));
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SongSpecificKanjiPronunciationSurvivesTrailingPunctuation(bool literate)
+        {
+            var beatmap = new LyricBeatmap
+            {
+                Metadata = map("天").Metadata,
+                Granularity = TimingGranularity.Word,
+                Lines = new[]
+                {
+                    new LyricLine
+                    {
+                        RawText = "tententengoku jigokugoku!", Original = "天天天国地獄国！",
+                        StartTime = 0, EndTime = 5000, SingEndTime = 3000,
+                        Units = new[]
+                        {
+                            new TimedUnit { Text = "tententengoku", Original = "天天天国", StartTime = 1000, EndTime = 2000 },
+                            new TimedUnit { Text = "jigokugoku!", Original = "地獄国！", StartTime = 2000, EndTime = 3000 },
+                        },
+                    },
+                },
+            };
+            var engine = new TypingEngine(beatmap, literate: literate, polyglot: true, polyglotLanguage: "japanese") { SpaceSkipsWord = true };
+            engine.Update(1000);
+            foreach (char c in "tententengoku")
+                engine.ProcessKey(c, 1200);
+            foreach (char c in "jigokugoku")
+                engine.ProcessKey(c, 2200);
+            Assert.That(engine.Lines[0].Cells.Where(c => char.IsLetter(c.Expected)).All(c => c.State == CellState.Correct), Is.True);
+            Assert.That(engine.Mistypes, Is.Zero);
+            if (literate)
+            {
+                Assert.That(engine.Lines[0].Cells.Last().State, Is.EqualTo(CellState.Untyped), "punctuation must still be typed under Literate");
+                engine.ProcessKey('!', 2250);
+                Assert.That(engine.Lines[0].Cells.Last().State, Is.EqualTo(CellState.Correct));
+            }
+        }
+
         [Test]
         public void NonJapanesePolyglotAndUnmodifiedPlayDoNotUseRomajiOrFurigana()
         {

@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
 
 namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 {
@@ -116,7 +117,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// <summary>Decode a mapper's phonetic reading when it differs from the dictionary.</summary>
         internal static string? ReadAuthored(string text)
         {
-            text = text.ToLowerInvariant();
+            // A map's surrounding punctuation is typed separately under Literate. It must not
+            // invalidate an otherwise explicit kanji reading (e.g. jigokugoku!). Keep the IME's
+            // nasal apostrophe and the long-vowel hyphen as part of the reading.
+            text = text.ToLowerInvariant().Trim(Typeability.PUNCTUATION.Where(c => c is not '\'' and not '-').ToArray());
             var kana = new StringBuilder();
             for (int at = 0; at < text.Length;)
             {
