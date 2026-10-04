@@ -90,6 +90,23 @@ namespace typebeat.Game.Beatmaps
                 }
             }
 
+            // The set's own update identity (see BeatmapSetInfo.OnlineVersionLastUpdated). The server reports
+            // the set version on every difficulty, so any successful result carries it; adopting it here is
+            // what clears the "behind" state once the local copy is genuinely at the online version, and what
+            // a first-ever lookup of an unversioned set records without manufacturing an offer.
+            DateTimeOffset? onlineVersion = lookupResults.Where(r => r != null).Select(r => (DateTimeOffset?)r!.LastUpdated).Max();
+            beatmapSet.AdoptOnlineVersion(onlineVersion);
+
+            // What the online version offers about the stem (backlog 396), reported on every difficulty of
+            // the set. Only recorded when a lookup actually succeeded: a failed or absent one must not blank a
+            // flag that is holding the UPDATE offer open. Same source as the version baseline, so a fresh
+            // import (which runs this lookup) seeds it too, and a plain lookup of an already-installed set
+            // refreshes it on first sight.
+            var successful = lookupResults.Where(r => r != null).ToList();
+
+            if (successful.Count > 0)
+                beatmapSet.RecordOnlineVocalsStem(successful.Any(r => r!.HasVocalsStem));
+
             if (beatmapSet.Beatmaps.All(b => b.MatchesOnlineVersion)
                 && lookupResults.All(r => r != null)
                 && lookupResults.Select(r => r!.BeatmapSetID).Distinct().Count() == 1)

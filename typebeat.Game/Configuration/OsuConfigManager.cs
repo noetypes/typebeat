@@ -35,6 +35,13 @@ namespace typebeat.Game.Configuration
             // The seasonal backgrounds row has no settings UI (removed pending a possible
             // return), so pin the value regardless of what an older install had stored.
             SetValue(OsuSetting.SeasonalBackgroundMode, SeasonalBackgroundMode.Never);
+
+            if (!Get<bool>(OsuSetting.BackgroundDimDefaultApplied))
+            {
+                if (Get<double>(OsuSetting.DimLevel) < 0.4)
+                    SetValue(OsuSetting.DimLevel, 0.4);
+                SetValue(OsuSetting.BackgroundDimDefaultApplied, true);
+            }
         }
 
         protected override void InitialiseDefaults()
@@ -56,6 +63,7 @@ namespace typebeat.Game.Configuration
 
             SetDefault(OsuSetting.RandomSelectAlgorithm, RandomSelectAlgorithm.RandomPermutation);
             SetDefault(OsuSetting.ModSelectHotkeyStyle, ModSelectHotkeyStyle.Sequential);
+
             SetDefault(OsuSetting.ModSelectTextSearchStartsActive, true);
 
             SetDefault(OsuSetting.ChatDisplayHeight, ChatOverlay.DEFAULT_HEIGHT, 0.2f, 1f, 0.01f);
@@ -141,9 +149,8 @@ namespace typebeat.Game.Configuration
 
             // Gameplay
             SetDefault(OsuSetting.PositionalHitsoundsLevel, 0.2f, 0, 1, 0.01f);
-            // type!beat ships with no gameplay background dim by default so the beatmap
-            // background image/video is fully visible. (Only affects fresh installs; see below.)
-            SetDefault(OsuSetting.DimLevel, 0, 0, 1, 0.01);
+            SetDefault(OsuSetting.DimLevel, 0.4, 0, 1, 0.01);
+            SetDefault(OsuSetting.BackgroundDimDefaultApplied, false);
             SetDefault(OsuSetting.BlurLevel, 0, 0, 1, 0.01);
             SetDefault(OsuSetting.LightenDuringBreaks, true);
 
@@ -340,6 +347,7 @@ namespace typebeat.Game.Configuration
         AutoCursorSize,
         GameplayCursorDuringTouch,
         DimLevel,
+        BackgroundDimDefaultApplied,
         BlurLevel,
         EditorDim,
         LightenDuringBreaks,
@@ -475,5 +483,12 @@ namespace typebeat.Game.Configuration
 
         DashboardSortMode,
         DashboardDisplayStyle,
+
+        // NOTE (backlog 383): there used to be a KeyboardLayout member here, the layout the player's
+        // keycaps follow. Gameplay typing reads the OS's committed text since 383, and the shortcuts
+        // it still steered follow the OS's own keyboard map now (Input.OsKeyboardLayout), so it was
+        // retired rather than renamed. A stored "KeyboardLayout = ..." line in game.ini needs no
+        // migration: the ini loader skips a key it cannot parse into this enum, and the next save
+        // writes the file without it. Do not reuse the name for something else.
     }
 }

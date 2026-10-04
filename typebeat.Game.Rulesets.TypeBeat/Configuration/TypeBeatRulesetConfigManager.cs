@@ -31,11 +31,19 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
         /// Whether the locally installed lyriclab auto-aligner is used for imports. On by default:
         /// when an installed environment exists it times the words; when off (or nothing is
         /// installed) imports fall back to the lyrics' own [mm:ss.xx] line stamps, which since the
-        /// server-side aligner was retired is the ONLY other source of timing. The setting still
-        /// earns its keep as the gate on the installed environment (a user who has paid the multi-GB
-        /// install can still choose the instant line-stamp path per import without uninstalling); it
-        /// never triggers the install itself, which stays an explicit action (the first-run prompt
-        /// and the Settings button).
+        /// server-side aligner was retired is the ONLY other source of timing. It never triggers the
+        /// install itself, which stays an explicit action (the first-run prompt and the Settings
+        /// button).
+        ///
+        /// <para>DORMANT since backlog 381: the switch is no longer offered in Settings (see
+        /// <see cref="TypeBeatRulesetConfigManager.LOCAL_ALIGNER_TOGGLE_SURFACED"/>). With the
+        /// server aligner gone the local one is the only auto-align path, so INSTALLING it is the
+        /// opt-in and uninstalling it is the opt-out, and the import path does not read this value
+        /// while the switch is hidden. The key, its default and every stored row are kept untouched
+        /// (a player who turned it off still has <c>False</c> on disk) so that a returning hosted
+        /// aligner, which would make "local or not" a real choice again, can surface the switch and
+        /// honour those rows exactly as they were left. Do not delete or rename the member: Realm
+        /// keys rows by member name.</para>
         /// </summary>
         LocalAlignerEnabled,
 
@@ -67,11 +75,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
         /// </summary>
         SungCaretStyle,
 
-        /// <summary>
-        /// Physical keyboard layout the player types on. Keys arrive by physical position, so a
-        /// non-QWERTY layout needs the produced character remapped (see <see cref="KeyboardLayout"/>).
-        /// </summary>
-        KeyboardLayout,
+        // NOTE (backlog 371): there used to be a KeyboardLayout member here. The layout now decides
+        // which physical key every SHORTCUT in the game answers to, so it moved to the game config
+        // (OsuSetting.KeyboardLayout), and KeyboardLayoutSettingCarry moved a stored choice across
+        // once and deleted the orphaned row. Backlog 383 retired the game setting too (the layout is
+        // read off the OS now) and the carry with it; a row older builds left here is an orphan
+        // this config never reads.
 
         // NOTE (backlog 107): there used to be an AllowWrongInput member here. Typing wrong
         // characters through is now the DEFAULT gameplay for everyone and strict rejection is a mod
@@ -180,23 +189,26 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
         ShowPaceColours,
 
         /// <summary>
-        /// Whether the SYNC METRIC is shown at all: the gameplay HUD's "sync" readout
-        /// (<see cref="UI.TypeBeatHudOverlay"/>) and the sync TINT that paints a correctly typed
+        /// Whether the SYNC METRIC is shown at all: the sync TINT that paints a correctly typed
         /// character on a brightness ramp by how in time the press was
         /// (<see cref="UI.LyricLineDisplay.CorrectCharColour"/>). OFF by default (backlog 251).
         ///
         /// <para>The metric was removed from the game because it AFFECTED things, and the fix was to
         /// stop it affecting them rather than to delete it: since backlog 251 no grade, score,
         /// judgement or submission reads sync anywhere (<see cref="Gameplay.ResultsSummary.Grade"/>
-        /// is accuracy alone), so this key decides nothing but whether the figure is drawn. The
+        /// is accuracy alone), so this key decides nothing but whether the tint is drawn. The
         /// numbers behind it (<see cref="Gameplay.TypingEngine.LiveSyncPercent"/>,
         /// <see cref="Gameplay.ResultsSummary.SyncPercent"/>) are computed either way, which is what
         /// lets the toggle be a pure display switch with no mid-play consequence.</para>
         ///
+        /// <para>Backlog 389 removed the last other consumer of this switch: the gameplay HUD's
+        /// "sync" readout was an invisible, off-by-default component on the "Typing counters" skin
+        /// layer. The tint is what remains, so this toggle now decides exactly one thing.</para>
+        ///
         /// <para>Purely visual on exactly the terms <see cref="UseSpaceErrorDot"/> and
-        /// <see cref="ShowSyllableMarkers"/> are: it binds straight to the HUD and the lyric
-        /// displays and never reaches the replay CONFIG frame, so a replay re-derives identically
-        /// whichever way the player left it.</para>
+        /// <see cref="ShowSyllableMarkers"/> are: it binds straight to the lyric displays and never
+        /// reaches the replay CONFIG frame, so a replay re-derives identically whichever way the
+        /// player left it.</para>
         /// </summary>
         ShowSyncMetric,
 
@@ -224,8 +236,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
         /// instead of thirty seconds at six threads, twice that on two). That is a cost a player
         /// should choose, not one the game should impose on everybody's first import.
         ///
-        /// <para>Only consulted when <see cref="LocalAlignerEnabled"/> lets the aligner run at all,
-        /// and it never touches the install: the tier is a per-run flag of the same script, so both
+        /// <para>Only consulted when the aligner runs at all (it is installed, and, should
+        /// <see cref="LocalAlignerEnabled"/> ever be surfaced again, switched on), and it never
+        /// touches the install: the tier is a per-run flag of the same script, so both
         /// tiers work off one environment. An installed aligner older than version 6 has no tiers,
         /// so the flag is then left out (see <c>LyricMapImporter.AlignerArguments</c>).</para>
         ///
@@ -405,6 +418,19 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
         /// </summary>
         public const CaretStyle DEFAULT_SUNG_CARET_STYLE = CaretStyle.Line;
 
+        /// <summary>
+        /// Whether Settings &gt; Experimental offers the <see cref="TypeBeatRulesetSetting.LocalAlignerEnabled"/>
+        /// switch, and with it whether the import path honours its stored value. One flag for both on
+        /// purpose (backlog 381): a stored <c>False</c> the player can no longer see or change would be
+        /// an unreachable trap, an installed aligner that silently never runs while the failure copy
+        /// tells them to install it. So while the switch is hidden the INSTALL is the opt-in and the
+        /// stored value is ignored (not rewritten); setting this back to true restores the row and
+        /// re-honours every stored choice as it was left. Read through default parameters
+        /// (<c>LyricMapImportService.LocalAlignerEnabled</c>,
+        /// <c>TypeBeatExperimentalSettingsSubsection.BuildControls</c>) so a test can pin both arms.
+        /// </summary>
+        public const bool LOCAL_ALIGNER_TOGGLE_SURFACED = false;
+
         public TypeBeatRulesetConfigManager(SettingsStore? settings, RulesetInfo ruleset, int? variant = null)
             : base(migrateIndicatorDefaults(migratePaceColourMode(settings, ruleset, variant ?? 0), ruleset, variant ?? 0), ruleset, variant)
         {
@@ -512,7 +538,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
             SetDefault(TypeBeatRulesetSetting.CaretStyle, DEFAULT_CARET_STYLE);
             SetDefault(TypeBeatRulesetSetting.CaretSmoothing, DEFAULT_CARET_SMOOTHING_MS, 0.0f, 50.0f, 1.0f);
             SetDefault(TypeBeatRulesetSetting.SungCaretStyle, DEFAULT_SUNG_CARET_STYLE);
-            SetDefault(TypeBeatRulesetSetting.KeyboardLayout, Gameplay.KeyboardLayout.Qwerty);
             SetDefault(TypeBeatRulesetSetting.SpaceSkipsWord, true);
             SetDefault(TypeBeatRulesetSetting.ManualNewlines, true);
             SetDefault(TypeBeatRulesetSetting.LineSpacing, 96.0f, 40.0f, 200.0f, 1.0f);

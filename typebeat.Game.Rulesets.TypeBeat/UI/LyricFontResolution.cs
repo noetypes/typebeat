@@ -78,8 +78,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             if (fontManager == null)
                 return null;
 
-            string? playerFamily = config?.GetBindable<string>(TypeBeatRulesetSetting.LyricFont).Value;
-            bool useMapFonts = config?.GetBindable<bool>(TypeBeatRulesetSetting.UseMapFonts).Value ?? true;
+            string? playerFamily = config?.Get<string>(TypeBeatRulesetSetting.LyricFont);
+            bool useMapFonts = config?.Get<bool>(TypeBeatRulesetSetting.UseMapFonts) ?? true;
             return Resolve(playerFamily, useMapFonts, mapFamily, fontManager.EnsureRegistered, registerMapFile);
         }
 
@@ -89,7 +89,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             if (fontManager == null)
                 return null;
 
-            bool useMapFonts = config?.GetBindable<bool>(TypeBeatRulesetSetting.UseMapFonts).Value ?? true;
+            bool useMapFonts = config?.Get<bool>(TypeBeatRulesetSetting.UseMapFonts) ?? true;
             string? resolved = ResolveConfigured(config, fontManager, mapFamily,
                 () => registerMapFontFile(fontManager, workingBeatmap, mapFontFile));
 
@@ -144,8 +144,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         public string? ResolveForMap(TypeBeatRulesetConfigManager? config, LyricFontManager? fontManager,
                                      string? mapFamily, string? mapFontFile, WorkingBeatmap? workingBeatmap)
         {
-            string? playerFamily = config?.GetBindable<string>(TypeBeatRulesetSetting.LyricFont).Value;
-            bool useMapFonts = config?.GetBindable<bool>(TypeBeatRulesetSetting.UseMapFonts).Value ?? true;
+            string? playerFamily = config?.Get<string>(TypeBeatRulesetSetting.LyricFont);
+            bool useMapFonts = config?.Get<bool>(TypeBeatRulesetSetting.UseMapFonts) ?? true;
 
             if (initialized
                 && ReferenceEquals(config, lastConfig)

@@ -309,6 +309,15 @@ namespace typebeat.Game.Beatmaps
                 return resources.Tracks.Get(fileStorePath);
             }
 
+            /// <summary>
+            /// The file store path of the audio file: it is named by the file's hash, so it changes whenever
+            /// the data does, including when a swap replaces the audio under the same filename.
+            /// </summary>
+            protected override string WaveformSource
+                => string.IsNullOrEmpty(Metadata?.AudioFile) || Metadata.AudioFile == virtual_track_filename
+                    ? null
+                    : BeatmapSetInfo.GetPathForFile(Metadata.AudioFile);
+
             protected override Waveform GetWaveform()
             {
                 if (string.IsNullOrEmpty(Metadata?.AudioFile))
@@ -446,6 +455,16 @@ namespace typebeat.Game.Beatmaps
             }
 
             public override Stream GetStream(string storagePath) => resources.Files.GetStream(storagePath);
+
+            /// <summary>
+            /// The vocals stem's file, read from the set's own file store. The framework
+            /// <see cref="Waveform"/> takes ownership of the stream and disposes it when done.
+            /// </summary>
+            protected override Stream GetVocalsStream(string vocalsStemFilename)
+            {
+                string fileStorePath = BeatmapSetInfo.GetPathForFile(vocalsStemFilename);
+                return fileStorePath == null ? null : GetStream(fileStorePath);
+            }
 
             private string getMainStoryboardFilename(IBeatmapMetadataInfo metadata)
             {

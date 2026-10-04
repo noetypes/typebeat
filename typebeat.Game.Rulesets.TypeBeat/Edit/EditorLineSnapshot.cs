@@ -23,12 +23,23 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         public static EditorLineSnapshot For(EditorBeatmap beatmap) => snapshots.GetValue(beatmap, map => new EditorLineSnapshot(map));
 
         private readonly EditorBeatmap beatmap;
+        private readonly OrderedLinesCache orderedLines = new OrderedLinesCache();
         private IReadOnlyList<TypeBeatHitObject>? lines;
 
         /// <summary>Changes whenever the map is edited, including undo and reprocessing.</summary>
         public int Revision { get; private set; }
 
-        public IReadOnlyList<TypeBeatHitObject> Lines => lines ??= TypeBeatEditorOperations.OrderedLines(beatmap).AsReadOnly();
+        public IReadOnlyList<TypeBeatHitObject> Lines
+        {
+            get
+            {
+                var current = orderedLines.Get(beatmap);
+                // Also catch direct immutable-line replacements that did not raise an editor event.
+                if (lines != null && !ReferenceEquals(lines, current))
+                    Revision++;
+                return lines = current;
+            }
+        }
 
         private EditorLineSnapshot(EditorBeatmap beatmap)
         {

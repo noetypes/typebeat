@@ -102,7 +102,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
 
         /// <summary>
         /// The cosmetic and input controls the section always had are still there, in order, with the
-        /// settled typing, lyric, caret, and feedback controls. Pinned
+        /// settled typing, lyric, caret, and feedback controls, and without the keyboard layout
+        /// dropdown backlog 383 retired (typing and shortcuts both follow the OS layout now). Pinned
         /// as a whole so a control that silently left the section would be noticed here.
         /// </summary>
         [Test]
@@ -120,14 +121,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
                     FormCheckBox checkbox => checkbox.Caption.ToString(),
                     FormSliderBar<float> slider => slider.Caption.ToString(),
                     FormDropdown<string> font => font.Caption.ToString(),
-                    FormDropdown<KeyboardLayout> layout => layout.Caption.ToString(),
                     FormDropdown<CaretStyle> caret => caret.Caption.ToString(),
                     FormDropdown<PaceColourMode> mode => mode.Caption.ToString(),
                     FormDropdown<JudgementIndicatorMode> indicator => indicator.Caption.ToString(),
                     _ => "?",
                 }), Is.EqualTo(new[]
                 {
-                    "Keyboard layout",
                     "Space to skip current word",
                     "Manual newlines",
 

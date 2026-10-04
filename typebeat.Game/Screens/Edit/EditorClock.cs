@@ -41,7 +41,7 @@ namespace typebeat.Game.Screens.Edit
         public AudioAdjustments AudioAdjustments { get; } = new AudioAdjustments();
 
         /// <summary>The editor's selected tempo, also inherited by Test Play.</summary>
-        public BindableNumber<double> PlaybackRate { get; } = new BindableDouble(1) { MinValue = 0.05, MaxValue = 2 };
+        public BindableNumber<double> PlaybackRate { get; } = new BindableDouble(1) { MinValue = 0.06, MaxValue = 2, Precision = 0.01 };
 
         public ControlPointInfo ControlPointInfo => Beatmap.ControlPointInfo;
 

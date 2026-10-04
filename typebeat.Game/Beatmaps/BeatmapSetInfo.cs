@@ -82,6 +82,228 @@ namespace typebeat.Game.Beatmaps
         /// </remarks>
         public bool? IntroPoolInclusion { get; set; }
 
+        /// <summary>
+        /// How the local auto-aligner times this set's words on its next import or re-align (see
+        /// <see cref="Beatmaps.AlignerVocalMode"/>), chosen by the mapper beside the importer's automatic
+        /// alignment and the editor's "Generate timing". Per SET because the choice is about the song's
+        /// vocals, which every difficulty shares.
+        /// </summary>
+        /// <remarks>
+        /// User data like <see cref="IntroPoolInclusion"/>, and for the same reasons: it lives in realm and
+        /// never in a beatmap file, so it never re-encodes a map and never travels in a package (the server
+        /// never sees it), and the realm write mapper does not copy it, so an editor save of a set detached
+        /// before the choice cannot revert it. The column's realm default (0) is
+        /// <see cref="Beatmaps.AlignerVocalMode.Aligned"/>, so schema 61 needed no migration body.
+        /// </remarks>
+        [Ignored]
+        public AlignerVocalMode AlignerVocalMode
+        {
+            get => (AlignerVocalMode)AlignerVocalModeInt;
+            set => AlignerVocalModeInt = (int)value;
+        }
+
+        [MapTo(nameof(AlignerVocalMode))]
+        public int AlignerVocalModeInt { get; set; }
+
+        /// <summary>
+        /// The online set version (the server's <c>beatmapsets.updated_at</c>, surfaced to the client as
+        /// <c>last_updated</c>) that THIS local copy corresponds to, or <c>null</c> when no version has been
+        /// recorded yet.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The set's update signal for a version cut that changes no <c>.osu</c> bytes, which is exactly how a
+        /// stem-only version is attached server-side: a ranked set is re-snapshotted with its existing
+        /// content plus <c>vocals.ogg</c> and <c>updated_at</c> is bumped, left deliberately fingerprint-neutral so
+        /// the set is not demoted. Every difficulty's MD5 is then unchanged, so the MD5 path
+        /// (<see cref="BeatmapInfo.MatchesOnlineVersion"/>) cannot see the new version and the UPDATE button
+        /// would never appear, stranding the stem. Comparing the freshly-fetched online version against this
+        /// stored baseline closes that gap.
+        /// </para>
+        /// <para>
+        /// It is deliberately NOT <see cref="BeatmapInfo.LastOnlineUpdate"/>: that field is refreshed on EVERY
+        /// lookup, so it records "when I last looked", not "the version I have", and a naive comparison against
+        /// it fires once and settles. Here the baseline only advances when the local copy is genuinely brought
+        /// to a version: adopted on first sight (see <see cref="BeatmapUpdaterMetadataLookup"/> and
+        /// <see cref="Screens.Select.RealmPopulatingOnlineLookupSource"/>) and re-adopted after an accepted
+        /// update (see <see cref="BeatmapImporter.ImportAsUpdate"/>). While the online version is newer it is
+        /// left where it is, so the offer does not settle on its own.
+        /// </para>
+        /// </remarks>
+        public DateTimeOffset? OnlineVersionLastUpdated { get; set; }
+
+        /// <summary>
+        /// Whether the online set's CURRENT version carries an isolated vocals stem
+        /// (<c>vocals.ogg</c>/<c>vocals.wav</c>), as last reported by a metadata lookup
+        /// (<c>has_vocals_stem</c>, backlog 396). Realm column, default false.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The server's answer for the version currently being served, recorded on every successful lookup
+        /// exactly as <see cref="OnlineVersionLastUpdated"/> is, and compared at read time against the stem
+        /// the LOCAL copy actually carries (<see cref="OnlineStemIsMissingLocally"/>). It is deliberately not
+        /// gated by <see cref="OnlineVersionLastUpdated"/>'s "do not advance while behind" rule: it describes
+        /// what the online offers right now, and whether that is something the local copy lacks is a separate
+        /// question answered by the local file list.
+        /// </para>
+        /// <para>
+        /// A realm schema bump added it with the column default false, meaning "no stem known", which reads as
+        /// nothing to offer; the next lookup records the real value. That ordering matters: the offer must not
+        /// fire off a stale flag before a lookup has confirmed the online version's content.
+        /// </para>
+        /// </remarks>
+        public bool OnlineVersionHasVocalsStem { get; set; }
+
+        /// <summary>
+        /// Whether the LOCAL copy carries a vocals stem (<c>vocals.ogg</c>/<c>vocals.wav</c>), recorded as a
+        /// scalar column at import and after an accepted update.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A scalar, deliberately, rather than a live read of <see cref="Files"/>: the song-select carousel
+        /// holds DETACHED sets, and the detach mapper strips <see cref="Files"/> for weight (see
+        /// <c>RealmObjectExtensions.beatmap_set_mapper</c>), so <see cref="VocalsStem.FilenameIn"/> sees no
+        /// file at all on the very object <see cref="Screens.Select.PanelUpdateBeatmapButton"/> reads. The
+        /// live file list is only correct on the managed set the importer holds, which the panel never sees,
+        /// so a presence test against it made <see cref="OnlineStemIsMissingLocally"/> true forever.
+        /// </para>
+        /// <para>
+        /// Recorded by <see cref="RecordLocalVocalsStem()"/> at import and on the changed update branch, and
+        /// backfilled for every existing set by realm schema 64. It is copied by the detach mapper (a plain
+        /// scalar), so the carousel sees the real value.
+        /// </para>
+        /// </remarks>
+        public bool HasLocalVocalsStem { get; set; }
+
+        /// <summary>
+        /// Whether the online set has a version strictly newer than <see cref="OnlineVersionLastUpdated"/>
+        /// that the local copy does not correspond to yet.
+        /// </summary>
+        /// <remarks>
+        /// Compared against each difficulty's <see cref="BeatmapInfo.LastOnlineUpdate"/>, which holds the
+        /// newest online version seen for this set (every difficulty of a set carries the same server-side
+        /// value). A difficulty that has never been looked up, or a locally modified map, has a null
+        /// <see cref="BeatmapInfo.LastOnlineUpdate"/> and so contributes nothing: without that, the null
+        /// baseline of a never-looked-up map would read as "behind".
+        /// </remarks>
+        public bool OnlineVersionIsNewer
+        {
+            get
+            {
+                DateTimeOffset? stored = OnlineVersionLastUpdated;
+
+                if (stored == null)
+                    return false;
+
+                foreach (var beatmap in Beatmaps)
+                {
+                    DateTimeOffset? seen = beatmap.LastOnlineUpdate;
+
+                    if (seen != null && seen.Value > stored.Value)
+                        return true;
+                }
+
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Records the freshly-fetched online set version as the one this local copy corresponds to,
+        /// unless it is strictly newer (see <see cref="OnlineVersionLastUpdated"/>).
+        /// </summary>
+        /// <remarks>
+        /// The single write path for the baseline, so both lookup surfaces and any future one decide
+        /// identically. A strictly-newer online version is deliberately NOT adopted: that is the "my
+        /// stored set is behind" state <see cref="OnlineVersionIsNewer"/> reports, and advancing the
+        /// baseline past it here is what would make the offer flash once and settle. A first look
+        /// (<see cref="OnlineVersionLastUpdated"/> null) adopts, so a plain lookup of a set that has
+        /// never been versioned does not itself manufacture an offer.
+        /// </remarks>
+        /// <param name="onlineVersion">The version to record. <c>null</c> is ignored.</param>
+        public void AdoptOnlineVersion(DateTimeOffset? onlineVersion)
+        {
+            if (onlineVersion is not { } online)
+                return;
+
+            if (OnlineVersionLastUpdated is { } stored && online > stored)
+                return;
+
+            if (OnlineVersionLastUpdated != online)
+                OnlineVersionLastUpdated = online;
+        }
+
+        /// <summary>
+        /// Whether the online version offers a vocals stem the LOCAL copy lacks: the online set carries one
+        /// (as last looked up, <see cref="OnlineVersionHasVocalsStem"/>) and this set has no stem file
+        /// (<see cref="VocalsStem.FilenameIn"/>).
+        /// </summary>
+        /// <remarks>
+        /// This is the arm that makes a stem-only version cut visible (backlog 396). Such a cut adds a file
+        /// and bumps the version but leaves every <c>.osu</c> MD5 byte-identical, so neither the MD5 path nor
+        /// <see cref="OnlineVersionIsNewer"/> can see it against a client that already had the map (whose
+        /// baseline may have adopted the already-bumped version), and a client that already holds the audio
+        /// never re-fetches a version that only added a file. Presence, not time, is what the client can
+        /// actually tell apart here. Once the update lands <see cref="HasLocalVocalsStem"/> is set, so this
+        /// reads false and the offer clears on its own.
+        /// </remarks>
+        public bool OnlineStemIsMissingLocally => OnlineVersionHasVocalsStem && !HasLocalVocalsStem;
+
+        /// <summary>
+        /// Records whether the LOCAL copy carries a vocals stem, from the live file list. Called where the
+        /// MANAGED set is in hand (import, and the no-change update branch): it reads <see cref="Files"/>
+        /// via <see cref="VocalsStem.FilenameIn"/>, which is only populated on a managed set (see
+        /// <see cref="HasLocalVocalsStem"/>).
+        /// </summary>
+        public void RecordLocalVocalsStem() => RecordLocalVocalsStem(VocalsStem.FilenameIn(this) != null);
+
+        /// <summary>
+        /// Records whether the LOCAL copy carries a vocals stem from an already-computed answer. The
+        /// changed-branch update is handed the new set DETACHED (its <see cref="Files"/> are empty), so it
+        /// must pass the answer read from the freshly-written managed set instead.
+        /// </summary>
+        public void RecordLocalVocalsStem(bool hasLocalStem)
+        {
+            if (HasLocalVocalsStem != hasLocalStem)
+                HasLocalVocalsStem = hasLocalStem;
+        }
+
+        /// <summary>
+        /// Records what the last successful lookup reported about the online version's stem
+        /// (<see cref="OnlineVersionHasVocalsStem"/>). Only ever called with a real answer: a failed or
+        /// absent lookup must not blank a flag that is holding an offer open.
+        /// </summary>
+        public void RecordOnlineVocalsStem(bool hasVocalsStem)
+        {
+            if (OnlineVersionHasVocalsStem != hasVocalsStem)
+                OnlineVersionHasVocalsStem = hasVocalsStem;
+        }
+
+        /// <summary>
+        /// Records that an accepted UPDATE brought this local copy to the online version. Call after the
+        /// update's lookup has run (it reads the version off <see cref="BeatmapInfo.LastOnlineUpdate"/>, the
+        /// same field the lookup itself refreshes) and raises the baseline to it.
+        /// </summary>
+        /// <remarks>
+        /// The baseline is exactly the one that lagged (that is why an update was offered), so it is
+        /// deliberately moved forward here: this is the one place the local copy is genuinely brought to a
+        /// version, and without the move the freshly-imported set would still read as behind the very version
+        /// it was downloaded for and the offer would never clear. Everywhere else the baseline only advances
+        /// to a version it has not fallen behind (see <see cref="AdoptOnlineVersion"/>).
+        /// </remarks>
+        public void MarkUpdatedToOnlineVersion()
+        {
+            DateTimeOffset? seen = null;
+
+            foreach (var beatmap in Beatmaps)
+            {
+                if (beatmap.LastOnlineUpdate is { } t && (seen == null || t > seen.Value))
+                    seen = t;
+            }
+
+            if (seen != null)
+                OnlineVersionLastUpdated = seen;
+        }
+
         public double MaxStarDifficulty => Beatmaps.Count == 0 ? 0 : Beatmaps.Max(b => b.StarRating);
 
         public double MaxLength => Beatmaps.Count == 0 ? 0 : Beatmaps.Max(b => b.Length);
@@ -123,6 +345,18 @@ namespace typebeat.Game.Beatmaps
 
         IEnumerable<INamedFileUsage> IHasNamedFiles.Files => Files;
 
-        public bool AllBeatmapsUpToDate => Beatmaps.All(b => b.MatchesOnlineVersion);
+        /// <summary>
+        /// Whether every difficulty is at the online version, the set itself is at the online version, and
+        /// the local copy carries no file the online version offers but it lacks.
+        /// </summary>
+        /// <remarks>
+        /// Three arms: the per-difficulty MD5 (<see cref="BeatmapInfo.MatchesOnlineVersion"/>), the set
+        /// version baseline (<see cref="OnlineVersionIsNewer"/>), and the stem presence
+        /// (<see cref="OnlineStemIsMissingLocally"/>, against the recorded <see cref="HasLocalVocalsStem"/>).
+        /// The stem arm is what makes a stem-only version cut visible (backlog 396): the version baseline
+        /// cannot see it once it has adopted the already-bumped version, and the MD5 path cannot see it at
+        /// all, so presence is the only signal that holds.
+        /// </remarks>
+        public bool AllBeatmapsUpToDate => Beatmaps.All(b => b.MatchesOnlineVersion) && !OnlineVersionIsNewer && !OnlineStemIsMissingLocally;
     }
 }

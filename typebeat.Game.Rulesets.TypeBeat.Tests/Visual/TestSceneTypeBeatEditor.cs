@@ -5,15 +5,20 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
+using osu.Framework.Extensions.Color4Extensions;
+using osu.Framework.Graphics.Colour;
+using osu.Framework.Graphics.Shapes;
 using osu.Framework.Testing;
 using osu.Framework.Utils;
 using osuTK;
 using typebeat.Game.Beatmaps;
 using typebeat.Game.Graphics.Sprites;
+using typebeat.Game.Graphics.UserInterface;
 using typebeat.Game.Graphics.UserInterfaceV2;
 using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
 using typebeat.Game.Rulesets.TypeBeat.Edit;
 using typebeat.Game.Rulesets.TypeBeat.Objects;
+using typebeat.Game.Rulesets.TypeBeat.UI;
 using typebeat.Game.Screens.Edit;
 using typebeat.Game.Screens.Edit.Timing;
 using typebeat.Game.Screens.Edit.GameplayTest;
@@ -554,6 +559,59 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         }
 
         [Test]
+        public void TestMultiSelectionCornerNotch()
+        {
+            AddUntilStep("compose shown", () => Editor.ChildrenOfType<LyricComposeScreen>().Any());
+
+            AddStep("add a third line", () => TypeBeatEditorOperations.AddLine(EditorBeatmap, 5500, "third line"));
+            AddUntilStep("three rows", () => rows().Count == 3);
+
+            // A plain single selection is carried by the active tint alone, so no notch anywhere.
+            AddStep("click row 1", () => clickRow(0));
+            AddUntilStep("row 1 active", () => state().ActiveLine.Value == rows()[0].HitObject);
+            AddAssert("single selection shows no notch", () => noNotches());
+
+            // Ctrl+click the rest: rows 1, 2 and 3 are all in the set, the active one included.
+            AddStep("ctrl+click row 2", () => clickRow(1, ctrl: true));
+            AddStep("ctrl+click row 3", () => clickRow(2, ctrl: true));
+            AddUntilStep("three rows multi-selected", () => state().MultiSelectedLines.Count == 3);
+            AddAssert("every selected row shows the notch", () =>
+                rows().All(r => r.SelectionNotch.Alpha == 1));
+
+            // The active row carries BOTH its brighter tint and the notch (the active tint is
+            // Lighten(0.5), distinct from a plain multi-selected row's Lighten(0.25)).
+            AddAssert("active row is in the set and keeps both marks", () =>
+                state().MultiSelectedLines.Contains(rows()[2].HitObject)
+                && rows()[2].SelectionNotch.Alpha == 1
+                && singleColour(rows()[2].Background) == TypeBeatStyle.PanelBackground.Lighten(0.5f));
+            AddAssert("a non-active member shows the multi-select tint", () =>
+                singleColour(rows()[0].Background) == TypeBeatStyle.PanelBackground.Lighten(0.25f));
+
+            // The notch is a real, drawn shape in the row's top-left, inside the masked row.
+            AddAssert("notch is a drawn wedge in the top-left corner", () =>
+            {
+                var notch = rows()[2].SelectionNotch.ScreenSpaceDrawQuad;
+                var row = rows()[2].ScreenSpaceDrawQuad;
+                return notch.Width > 0 && notch.Height > 0
+                       && notch.TopLeft.X >= row.TopLeft.X - 0.5f && notch.TopLeft.Y >= row.TopLeft.Y - 0.5f
+                       && notch.BottomRight.X <= row.BottomRight.X + 0.5f && notch.BottomRight.Y <= row.BottomRight.Y + 0.5f
+                       && notch.TopLeft.X < row.Centre.X && notch.Width < row.Width / 2;
+            });
+
+            // Ctrl+click row 2 again removes it: its notch clears, the other two stay lit.
+            AddStep("ctrl+click row 2 again", () => clickRow(1, ctrl: true));
+            AddUntilStep("row 2 left the set", () => !state().MultiSelectedLines.Contains(rows()[1].HitObject));
+            AddAssert("deselected row's notch cleared", () => rows()[1].SelectionNotch.Alpha == 0);
+            AddAssert("remaining members keep the notch", () =>
+                rows()[0].SelectionNotch.Alpha == 1 && rows()[2].SelectionNotch.Alpha == 1);
+
+            // A plain click collapses the whole section: every notch goes out.
+            AddStep("plain click row 2", () => clickRow(1));
+            AddUntilStep("section collapsed", () => state().MultiSelectedLines.Count == 0);
+            AddAssert("all notches cleared", () => noNotches());
+        }
+
+        [Test]
         public void TestSectionSurvivesPlayback()
         {
             AddUntilStep("compose shown", () => Editor.ChildrenOfType<LyricComposeScreen>().Any());
@@ -795,6 +853,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             => Editor.ChildrenOfType<LineListPanel>().Single().ChildrenOfType<LineListPanel.LineRow>()
                      .OrderBy(r => r.HitObject.LineIndex).ToList();
 
+        /// <summary>True when no row currently draws the multi-selection corner notch (backlog 391).</summary>
+        private bool noNotches() => rows().All(r => r.SelectionNotch.Alpha == 0);
+
+        /// <summary>The single colour a drawable's box is painted with (the rows use one flat colour).</summary>
+        private static Color4 singleColour(Box box)
+            => box.Colour.TryExtractSingleColour(out SRGBColour c) ? c.SRGB : default;
+
         /// <summary>Clicks a row on its index column (the text box owns the rest of the row).</summary>
         private void clickRow(int index, bool ctrl = false, bool shift = false)
         {
@@ -839,8 +904,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
 
             AddStep("select line 1", () => clickRow(0));
             AddUntilStep("line 1 active", () => state().ActiveLine.Value == lineAt(0));
-            AddAssert("both enabled on a live multi-word line", () =>
-                panelButton("add word").Enabled.Value && panelButton("remove word").Enabled.Value);
+            AddAssert("add word is live on a live line", () => panelButton("add word").Enabled.Value);
+            AddAssert("remove word is greyed with nothing selected", () => !panelButton("remove word").Enabled.Value);
 
             // Nothing focused: the word is appended at the end of the line.
             AddStep("click add word", () => clickPanelButton("add word"));
@@ -865,6 +930,109 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         private RoundedButton panelButton(string text)
             => Editor.ChildrenOfType<ActiveLineDetailPanel>().Single()
                      .ChildrenOfType<RoundedButton>().Single(b => b.Text.ToString() == text);
+
+        /// <summary>The click sample carrier of a button (see <c>OsuButton</c>'s <c>HoverClickSounds</c>).</summary>
+        private HoverClickSounds clickSounds(RoundedButton button) => button.ChildrenOfType<HoverClickSounds>().Single();
+
+        /// <summary>
+        /// The four word-edit buttons that act on the WORD SELECTION ("remove word", "subdivide", its
+        /// inverse "unsubdivide", and "insert pause") are greyed out AND inert until a word is
+        /// selected (backlog 390), so a stray press with nothing selected can neither edit the map nor
+        /// make a click sound. "add word" is exempt: it appends to the line's end with nothing
+        /// selected, so it needs only a live editable line.
+        /// </summary>
+        [Test]
+        public void TestWordEditButtonsAreGreyedOutAndInertUntilAWordIsSelected()
+        {
+            AddUntilStep("compose shown", () => Editor.ChildrenOfType<LyricComposeScreen>().Any());
+            AddUntilStep("subdivide present", () => panelButton("subdivide (D)").DrawWidth > 0);
+
+            // A live line is active (playhead-follow) but no word is selected: the three word-edit
+            // buttons are greyed AND refuse positional input, so a click at their centre is a no-op.
+            AddStep("select line 1 and clear any word selection", () =>
+            {
+                state().SelectedLine.Value = lineAt(0);
+                state().ClearUnitSelection();
+            });
+            AddUntilStep("line 1 active", () => state().ActiveLine.Value == lineAt(0));
+            AddAssert("no word selected", () => state().SelectedUnitIndex.Value == -1 && state().SelectedUnitIndices.Count == 0);
+
+            AddAssert("subdivide greyed out", () => !panelButton("subdivide (D)").Enabled.Value);
+            AddAssert("unsubdivide greyed out", () => !panelButton("unsubdivide").Enabled.Value);
+            AddAssert("insert pause greyed out", () => !panelButton("insert pause").Enabled.Value);
+            AddAssert("remove word greyed out", () => !panelButton("remove word").Enabled.Value);
+
+            // Non-clickable: the button does not even hit-test, so the press cannot reach it.
+            AddAssert("subdivide refuses positional input", () => !panelButton("subdivide (D)").ReceivePositionalInputAt(panelButton("subdivide (D)").ScreenSpaceDrawQuad.Centre));
+            AddAssert("unsubdivide refuses positional input", () => !panelButton("unsubdivide").ReceivePositionalInputAt(panelButton("unsubdivide").ScreenSpaceDrawQuad.Centre));
+            AddAssert("insert pause refuses positional input", () => !panelButton("insert pause").ReceivePositionalInputAt(panelButton("insert pause").ScreenSpaceDrawQuad.Centre));
+            AddAssert("remove word refuses positional input", () => !panelButton("remove word").ReceivePositionalInputAt(panelButton("remove word").ScreenSpaceDrawQuad.Centre));
+
+            // The click/hover SOUND lives on a HoverClickSounds child (see OsuButton), and it fires only
+            // when the pointer reaches it, so a disabled button that refuses positional input makes no
+            // sample at all (not even the quiet disabled one).
+            AddAssert("subdivide plays no click sample", () => !clickSounds(panelButton("subdivide (D)")).ReceivePositionalInputAt(panelButton("subdivide (D)").ScreenSpaceDrawQuad.Centre));
+            AddAssert("remove word plays no click sample", () => !clickSounds(panelButton("remove word")).ReceivePositionalInputAt(panelButton("remove word").ScreenSpaceDrawQuad.Centre));
+
+            // A press with nothing selected changes nothing and fires no action.
+            string before = null!;
+            AddStep("photograph the sheet", () => before = snapshot());
+            AddStep("click subdivide with nothing selected", () => clickPanelButton("subdivide (D)"));
+            AddStep("click unsubdivide with nothing selected", () => clickPanelButton("unsubdivide"));
+            AddStep("click insert pause with nothing selected", () => clickPanelButton("insert pause"));
+            AddStep("click remove word with nothing selected", () => clickPanelButton("remove word"));
+            AddAssert("nothing was edited", () => snapshot(), () => Is.EqualTo(before));
+
+            // Selecting a word arms all four.
+            AddStep("select word 1", () => state().SelectUnit(0));
+            AddUntilStep("subdivide enabled", () => panelButton("subdivide (D)").Enabled.Value);
+            AddAssert("unsubdivide enabled", () => panelButton("unsubdivide").Enabled.Value);
+            AddAssert("insert pause enabled", () => panelButton("insert pause").Enabled.Value);
+            AddAssert("remove word enabled", () => panelButton("remove word").Enabled.Value);
+            AddAssert("subdivide now takes positional input", () => panelButton("subdivide (D)").ReceivePositionalInputAt(panelButton("subdivide (D)").ScreenSpaceDrawQuad.Centre));
+
+            // And a click now lands the edit.
+            AddStep("park the caret and subdivide", () =>
+            {
+                EditorClock.Stop();
+                EditorClock.Seek(1500);
+            });
+            AddUntilStep("caret parked", () => Math.Abs(EditorClock.CurrentTime - 1500) < 1);
+            AddStep("click subdivide", () => clickPanelButton("subdivide (D)"));
+            AddUntilStep("the word took a divider", () => lineAt(0).Line.Units[0].SyllableBoundaries.Count == 1);
+
+            // Clearing the selection greys them out again.
+            AddStep("clear the word selection", () => state().ClearUnitSelection());
+            AddUntilStep("subdivide greyed again", () => !panelButton("subdivide (D)").Enabled.Value);
+            AddAssert("unsubdivide greyed again", () => !panelButton("unsubdivide").Enabled.Value);
+            AddAssert("insert pause greyed again", () => !panelButton("insert pause").Enabled.Value);
+        }
+
+        /// <summary>
+        /// "remove word" needs BOTH a word selection and a removal target: a whole-line selection
+        /// would leave the line wordless (the format has no such line), so the button stays greyed
+        /// even though a word is selected, while the other selection-driven word-edit buttons are
+        /// enabled. Pinned together so the two predicates are visibly independent (backlog 390).
+        /// </summary>
+        [Test]
+        public void TestRemoveWordStillRequiresARemovalTarget()
+        {
+            AddUntilStep("compose shown", () => Editor.ChildrenOfType<LyricComposeScreen>().Any());
+            AddUntilStep("remove word present", () => panelButton("remove word").DrawWidth > 0);
+
+            AddStep("select line 1", () => clickRow(0));
+            AddUntilStep("line 1 active", () => state().ActiveLine.Value == lineAt(0));
+
+            // One of two words selected: reproducible removal (one word survives).
+            AddStep("select just word 1", () => state().SelectUnit(0));
+            AddAssert("remove available with a proper subset selected", () => panelButton("remove word").Enabled.Value);
+
+            // The WHOLE line selected: removal would leave it wordless, so remove greys out, while
+            // subdivide (which only needs a word selection) stays enabled.
+            AddStep("select the whole line's words", () => state().SelectUnitRange(0, 1));
+            AddAssert("remove greyed with the whole line selected", () => !panelButton("remove word").Enabled.Value);
+            AddAssert("subdivide enabled with a word selected", () => panelButton("subdivide (D)").Enabled.Value);
+        }
 
         /// <summary>
         /// A word can take more than one breath, and the strip draws one greyed region per breath: the

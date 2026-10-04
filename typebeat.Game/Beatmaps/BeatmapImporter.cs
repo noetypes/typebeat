@@ -64,8 +64,11 @@ namespace typebeat.Game.Beatmaps
                     // Transfer local values which should be persisted across a beatmap update.
                     s.DateAdded = originalDateAdded;
 
-                    // Re-run processing even in this case. We might have outdated metadata.
-                    ProcessBeatmap?.Invoke(s, MetadataLookupScope.OnlineFirst);
+                    // Re-run processing even in this case. We might have outdated metadata. The scope is
+                    // UpdateApplied (not OnlineFirst) because the user pressed UPDATE: the fresh bytes are on
+                    // disk, so the set's stored online version must be carried forward to the version just
+                    // fetched, clearing the offer (see MetadataLookupScope.UpdateApplied).
+                    ProcessBeatmap?.Invoke(s, MetadataLookupScope.UpdateApplied);
                 });
                 return first;
             }
@@ -87,6 +90,12 @@ namespace typebeat.Game.Beatmaps
                     updated.DateAdded = originalDateAdded;
 
                     transferCollectionReferences(realm, original, updated);
+
+                    // The stem the update just downloaded is in this set's file list; record its presence
+                    // so the (detached) set the carousel holds reads the offer as cleared (see
+                    // BeatmapSetInfo.HasLocalVocalsStem). The changed branch builds a NEW set object, so
+                    // the old set's value does not carry over here.
+                    updated.RecordLocalVocalsStem();
 
                     foreach (var beatmap in original.Beatmaps.ToArray())
                     {
@@ -233,6 +242,12 @@ namespace typebeat.Game.Beatmaps
             {
                 beatmap.UpdateLocalScores(realm);
             }
+
+            // Record the local stem presence while the MANAGED set is in hand (its file list is
+            // populated here; it is stripped on detach, which is what the carousel/predicate sees).
+            // Covers a fresh import and the no-change branch of ImportAsUpdate, both of which land
+            // here via Import(); the changed branch records it separately.
+            model.RecordLocalVocalsStem();
 
             ProcessBeatmap?.Invoke(model, parameters.Batch ? MetadataLookupScope.LocalCacheFirst : MetadataLookupScope.OnlineFirst);
         }

@@ -59,8 +59,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
         /// </summary>
         public const char SPLIT_MARKER = '|';
 
-        // INVARIANT: the accepted set must be a subset of what KeyCharMap can produce
-        // (ASCII letters/digits/space after Fold); anything else must classify as
+        // INVARIANT: the accepted set must be a subset of what the input path can produce
+        // (TextInputFold since backlog 383, KeyCharMap's key tables before it: ASCII
+        // letters/digits/space after Fold); anything else must classify as
         // non-typeable so it auto-skips instead of stranding the caret on an
         // unreachable cell. Normalize strips Latin diacritics first, so 'é' survives as 'e'.
         // Deliberately excludes FREESTYLE_MARKER: a freestyle cell matches every key rather than
@@ -343,14 +344,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 if (CharUnicodeInfo.GetUnicodeCategory(original) == UnicodeCategory.NonSpacingMark)
                     continue;
 
-                char c = original switch
-                {
-                    '‘' or '’' or '‚' or '′' => '\'', // ' ' ‚ ′
-                    '“' or '”' or '„' or '″' => '"',  // " " „ ″
-                    '–' or '—' or '―' or '−' => '-',  // – — ― −
-                    ' ' or ' ' or ' ' => ' ',              // NBSP, figure space, narrow NBSP
-                    _ => original
-                };
+                char c = FoldTypographic(original);
 
                 // Supported punctuation survives into the stored line (the author's form); every
                 // other untypeable non-whitespace char is dropped from the game text entirely.
@@ -382,6 +376,26 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
 
             return sb.ToString();
         }
+
+        /// <summary>
+        /// The typographic variants <see cref="Normalize"/> folds into the supported ASCII forms, for
+        /// ONE char: curly quotes and apostrophes to '\'' and '"', the dashes and the minus sign to
+        /// '-', the no-break spaces to ' '. Every other char comes back unchanged. Written once here
+        /// because two paths read it: the lyric normalizer, and the gameplay text-input fold
+        /// (<see cref="Gameplay.TextInputFold"/>, backlog 383), which must turn what a keyboard
+        /// commits into the very cell the map stores.
+        /// </summary>
+        public static char FoldTypographic(char c) => c switch
+        {
+            '‘' or '’' or '‚' or '′' => '\'', // ' ' ‚ ′
+            '“' or '”' or '„' or '″' => '"',  // " " „ ″
+            '–' or '—' or '―' or '−' => '-',  // – — ― −
+            // NBSP, figure space, narrow NBSP. Escaped since backlog 383: the literals here had decayed
+            // into plain spaces, which the normalizer never noticed (it folds every whitespace char to
+            // a space on its own) but the text-input fold, which reads this one char at a time, did.
+            ' ' or ' ' or ' ' => ' ',
+            _ => c
+        };
 
         /// <summary>
         /// The DEFAULT (no-Literate) typed char for one authored char, or null when the default

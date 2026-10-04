@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 using osu.Framework.Allocation;
+using osu.Framework.Bindables;
 using osu.Framework.Graphics;
 using osu.Framework.Localisation;
 using typebeat.Game.Graphics.Fonts;
@@ -68,6 +69,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         /// typing font too: <see cref="fontManager"/> is resolved CanBeNull, so an absent one simply
         /// contributes no extra faces.
         /// </summary>
+        /// <param name="config">The ruleset's own settings.</param>
+        /// <remarks>
+        /// There is no keyboard layout control here any more (backlog 383): typing follows the OS's
+        /// own layout through its text input, and shortcuts follow the OS's keyboard map
+        /// (<see cref="Game.Input.OsKeyboardLayout"/>), so there is nothing left for a player to choose.
+        /// </remarks>
         internal Drawable[] BuildControls(TypeBeatRulesetConfigManager config)
         {
             var lyricFont = config.GetBindable<string>(TypeBeatRulesetSetting.LyricFont);
@@ -76,11 +83,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             return new Drawable[]
             {
                 CreateSubsectionHeader("Typing"),
-                new SettingsItemV2(new FormEnumDropdown<KeyboardLayout>
-                {
-                    Caption = "Keyboard layout",
-                    Current = config.GetBindable<KeyboardLayout>(TypeBeatRulesetSetting.KeyboardLayout),
-                }),
                 new SettingsItemV2(new FormCheckBox
                 {
                     Caption = "Space to skip current word",

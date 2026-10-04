@@ -54,6 +54,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         /// <summary>Caption of the bundle toggle; also how tests find it.</summary>
         public const string BUNDLE_FONT_CAPTION = "Bundle font file with the map";
 
+        /// <summary>Caption of the freestyle colour row (backlog 384); also how tests find it.</summary>
+        public const string FREESTYLE_COLOUR_CAPTION = "Freestyle character colour";
+
+        /// <summary>Caption of the estimated vocals toggle (backlog 354); also how tests find it.</summary>
+        public const string ESTIMATED_VOCALS_CAPTION = "Estimated vocals (pace lines from their stamps)";
+
         /// <summary>The picker item meaning "no map font": the game's built-in lyric font.</summary>
         public const string LYRIC_FONT_NONE = "None (built-in font)";
 
@@ -102,10 +108,20 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         private FormNumberBox offsetBox = null!;
         private FormButton demoButton = null!;
         private FormFileSelector lyricsSelector = null!;
+        private FormCheckBox estimatedVocalsToggle = null!;
         private FormDropdown<string> fontDropdown = null!;
         private OsuSpriteText fontPreview = null!;
         private FormCheckBox bundleToggle = null!;
         private OsuTextFlowContainer bundleNote = null!;
+        private FormColourSwatch freestyleColourRow = null!;
+
+        /// <summary>
+        /// What the row edits: never null, the default colour standing for "no key". Its DEFAULT is
+        /// the ruleset default, so an empty hex commit resets the map to carrying no key at all.
+        /// </summary>
+        private readonly Bindable<Colour4> freestyleColour = new Bindable<Colour4>(FreestyleColourKey.Default);
+
+        private IBindable<Colour4?> mapFreestyleColour = null!;
 
         // Guards the programmatic writes fontChanged makes to the bundle toggle (and rollbacks of a
         // refused bundle), so they do not re-enter bundleChanged; same shape as ResourcesSection's
@@ -158,6 +174,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
                     ButtonText = "Generate timing",
                     Action = runImport,
                 },
+                estimatedVocalsToggle = new FormCheckBox
+                {
+                    Caption = ESTIMATED_VOCALS_CAPTION,
+                    HintText = "For vocals the auto-aligner cannot follow (screamed, effect-heavy): Generate timing paces every line evenly "
+                               + "from its [mm:ss.xx] stamp instead of following the audio. Needs line stamps and an up-to-date local "
+                               + "auto-aligner. Usually much worse on ordinary songs, so turn it on only when the aligned words are wrong. "
+                               + "Remembered for this map set on this machine; never uploaded.",
+                },
                 fontDropdown = new FormDropdown<string>
                 {
                     Caption = LYRIC_FONT_CAPTION,
@@ -181,6 +205,15 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
                     AutoSizeAxes = Axes.Y,
                     Padding = new MarginPadding { Left = 9, Right = 9 },
                 },
+                // Backlog 384: the map's freestyle colour, straight under the bundle-font row (and its
+                // note). A hex field plus the shared 2D picker; the map carries no key until the
+                // mapper picks a colour other than the default.
+                freestyleColourRow = new FormColourSwatch
+                {
+                    Caption = FREESTYLE_COLOUR_CAPTION,
+                    HintText = "Colour of the freestyle (&) characters on this map, in gameplay and in the editor preview. Type a hex code or click the swatch for a picker; clear the field to go back to the default. Applies in the desktop client and on the website's player.",
+                    Current = { BindTarget = freestyleColour },
+                },
             };
 
             // Seed the font controls from what the map already carries; the value-changed wiring in
@@ -191,6 +224,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
             bundleToggle.Current.Disabled = initialFamily == LYRIC_FONT_NONE;
             updateBundleNote(initialFamily);
             updateFontPreview(initialFamily);
+
+            // The set's stored aligner vocal mode (realm user data, see BeatmapSetInfo.AlignerVocalMode).
+            estimatedVocalsToggle.Current.Value = storedVocalMode() == AlignerVocalMode.Estimated;
 
             beatdropBox.OnCommit += (_, _) => commitBeatdrop();
 
@@ -208,7 +244,23 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
             base.LoadComplete();
 
             fontDropdown.Current.BindValueChanged(e => fontChanged(e.NewValue));
+
+            // Stored the moment it is toggled, like song select's intro pool toggle, rather than on an
+            // editor save: it is user data about the song's vocals, not map content, so it never
+            // dirties the map, and a re-align made before saving already reads it.
+            estimatedVocalsToggle.Current.BindValueChanged(e =>
+            {
+                if (beatmaps != null && working.Value.BeatmapSetInfo is BeatmapSetInfo set)
+                    beatmaps.SetAlignerVocalMode(set, e.NewValue ? AlignerVocalMode.Estimated : AlignerVocalMode.Aligned);
+            });
             bundleToggle.Current.BindValueChanged(e => bundleChanged(e.NewValue));
+
+            // Two-way between the row and the map (backlog 384). Map to row seeds it and follows an
+            // undo; row to map stores the NORMALISED pick, so choosing the default removes the key.
+            // Neither direction loops: each write lands on a value the other side already holds.
+            mapFreestyleColour = Beatmap.FreestyleColour.GetBoundCopy();
+            mapFreestyleColour.BindValueChanged(c => freestyleColour.Value = FreestyleColourKey.Resolve(c.NewValue), true);
+            freestyleColour.BindValueChanged(c => Beatmap.FreestyleColour.Value = FreestyleColourKey.Normalise(c.NewValue));
 
             Beatmap.IntroBeatdrop.BindValueChanged(drop =>
             {
@@ -221,6 +273,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
                 demoButton.Enabled.Value = IntroBeatdropDemo.CanDemo(drop.NewValue);
             }, true);
         }
+
+        /// <summary>
+        /// The map set's stored aligner vocal mode; <see cref="AlignerVocalMode.Aligned"/> when there is no
+        /// beatmap manager or no stored set (a visual test, a set not yet saved).
+        /// </summary>
+        private AlignerVocalMode storedVocalMode()
+            => beatmaps != null && working.Value.BeatmapSetInfo is BeatmapSetInfo set ? beatmaps.GetAlignerVocalMode(set) : AlignerVocalMode.Aligned;
 
         /// <summary>
         /// Restarts the game so that its startup intro is soundtracked by this map's beatdrop. A reboot
@@ -352,6 +411,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
             string artist = working.Value.Metadata.Artist;
             string title = working.Value.Metadata.Title;
 
+            // The toggle beside the button, which mirrors the set's stored mode.
+            AlignerVocalMode vocalMode = estimatedVocalsToggle.Current.Value ? AlignerVocalMode.Estimated : AlignerVocalMode.Aligned;
+
             var progressNotification = new ProgressNotification
             {
                 Text = "Aligning lyrics to audio…",
@@ -393,7 +455,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
                         tempAudio, lyricsContent, artist, title,
                         reportProgress,
                         token,
-                        language: romanisationLanguage(lyricsContent)).ConfigureAwait(false);
+                        language: romanisationLanguage(lyricsContent),
+                        vocalMode: vocalMode).ConfigureAwait(false);
 
                     if (!result.Success || timingJson == null)
                     {

@@ -66,6 +66,28 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         }
 
         [Test]
+        public void DirectLineReplacementRefreshesTheSharedOrderAndRevision()
+        {
+            var beatmap = map();
+            var snapshot = EditorLineSnapshot.For(beatmap);
+            var first = snapshot.Lines;
+            var edited = first[0];
+            int revision = snapshot.Revision;
+            edited.Line = new LyricLine
+            {
+                RawText = "later",
+                StartTime = 7000,
+                EndTime = 8000,
+                SingEndTime = 7900,
+                Units = new[] { new TimedUnit { Text = "later", StartTime = 7000, EndTime = 7900 } },
+            };
+
+            Assert.That(snapshot.Lines[2], Is.SameAs(edited));
+            Assert.That(snapshot.Lines, Is.Not.SameAs(first));
+            Assert.That(snapshot.Revision, Is.GreaterThan(revision));
+        }
+
+        [Test]
         public void RepeatedDisplayReadsAvoidWholeMapSortAllocations()
         {
             var beatmap = map(500);

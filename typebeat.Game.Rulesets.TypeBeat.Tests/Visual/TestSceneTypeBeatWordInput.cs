@@ -10,7 +10,9 @@ using osu.Framework.Allocation;
 using osu.Framework.Input.Bindings;
 using osu.Framework.Testing;
 using typebeat.Game.Beatmaps;
+using typebeat.Game.Configuration;
 using typebeat.Game.Database;
+using typebeat.Game.Input;
 using typebeat.Game.Input.Bindings;
 using typebeat.Game.Replays.Legacy;
 using typebeat.Game.Rulesets.Mods;
@@ -253,6 +255,44 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                 InputManager.Key(Key.Space);
             });
             AddAssert("the typo is fixed", () => cell(1).State == CellState.Correct && engine.CaretIndex == 3);
+        }
+
+        [Resolved]
+        private OsKeyboardLayout osLayout { get; set; } = null!;
+
+        [TearDownSteps]
+        public void RestoreLayoutAfter() => AddStep("QWERTY keycaps", () => osLayout.Current.Value = KeyboardLayout.Qwerty);
+
+        /// <summary>
+        /// Backlog 371: the select-back chord answers to the A KEYCAP, which on AZERTY is QWERTY's Q
+        /// position, and Ctrl plus the physical A position (the Q keycap) is no longer the chord. The
+        /// physical keys are pressed here, and the scene's input manager rewrites them exactly as the
+        /// game's root does. Typing is the OS's (backlog 383): an AZERTY OS commits 'a' for the physical
+        /// Q key, which the scene's emulated text input does too.
+        /// </summary>
+        [Test]
+        public void TestCtrlAFollowsTheAKeycapOnAzerty()
+        {
+            AddStep("AZERTY keycaps", () => osLayout.Current.Value = KeyboardLayout.Azerty);
+            waitForLine();
+
+            AddStep("press the physical Q key (the A keycap)", () => InputManager.Key(Key.Q));
+            AddAssert("it typed 'a' exactly as before", () => cell(0).State == CellState.Correct && cell(0).TypedChar == 'a');
+
+            AddStep("press X (wrong for 'b')", () => InputManager.Key(Key.X));
+            type(" c");
+            AddAssert("the typo landed", () => cell(1).State == CellState.Wrong && engine.CaretIndex == 4);
+
+            recoveryChord(Key.A);
+            AddAssert("the physical A key (the Q keycap) is not the chord", () => playfield.CurrentRetypeSelection == null && engine.CaretIndex == 4);
+
+            recoveryChord(Key.Q);
+            AddAssert("the A keycap is", () =>
+                playfield.CurrentRetypeSelection is TypeBeatPlayfield.RetypeSelection { LineIndex: 0, StartCell: 0, EndCell: 4 });
+
+            AddStep("press the physical Q key again (consumes the selection)", () => InputManager.Key(Key.Q));
+            AddAssert("'a' landed on the anchor", () => engine.CaretIndex == 1 && cell(0).State == CellState.Correct && cell(0).TypedChar == 'a');
+            AddAssert("and the run re-derives exactly", reDerivedMatchesLive);
         }
 
         /// <summary>

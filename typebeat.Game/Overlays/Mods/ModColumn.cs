@@ -17,6 +17,7 @@ using osu.Framework.Input.Events;
 using typebeat.Game.Configuration;
 using typebeat.Game.Graphics;
 using typebeat.Game.Graphics.UserInterface;
+using typebeat.Game.Input;
 using typebeat.Game.Localisation;
 using typebeat.Game.Overlays.Mods.Input;
 using typebeat.Game.Rulesets.Mods;
@@ -64,6 +65,11 @@ namespace typebeat.Game.Overlays.Mods
         private readonly ToggleAllCheckbox? toggleAllCheckbox;
 
         private Bindable<ModSelectHotkeyStyle> hotkeyStyle = null!;
+
+        /// <summary>The keycap layout the root input manager rewrote keys by (backlog 371), read off the OS since backlog 383. Absent in a bare test scene, which means QWERTY.</summary>
+        [Resolved]
+        private OsKeyboardLayout? osKeyboardLayout { get; set; }
+
         private IModHotkeyHandler hotkeyHandler = null!;
 
         private Task? latestLoadTask;
@@ -348,7 +354,8 @@ namespace typebeat.Game.Overlays.Mods
             if (e.ControlPressed || e.AltPressed || e.SuperPressed || e.Repeat)
                 return false;
 
-            return hotkeyHandler.HandleModHotkeyPressed(e, availableMods);
+            // The root input manager hands over the KEYCAP key; the hotkey grid is positional.
+            return hotkeyHandler.HandleModHotkeyPressed(e, KeycapLayout.ToPhysical(e.Key, osKeyboardLayout?.Current.Value ?? KeyboardLayout.Qwerty), availableMods);
         }
 
         #endregion

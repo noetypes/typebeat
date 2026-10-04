@@ -37,9 +37,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
     ///
     /// This is also where a SECTION is picked: Ctrl/Command-click toggles a line in or out of the
     /// selection and Shift+click takes the contiguous run from the anchor (the last plain or
-    /// modifier-clicked row) to the clicked row. Every selected row is tinted, the last-clicked row
-    /// stays the ACTIVE line the detail panel edits, and section-level operations (timing
-    /// copy/paste, tap timing) consume the whole set. Escape drops it.
+    /// Ctrl-clicked row) to the clicked row. Every selected row is tinted AND carries a coloured
+    /// corner notch (backlog 391, since the multi-select tint alone reads as the same gray as an
+    /// unselected row), the last-clicked row stays the ACTIVE line the detail panel edits, and
+    /// section-level operations (timing copy/paste, tap timing) consume the whole set. Escape drops it.
     /// </summary>
     public partial class LineListPanel : CompositeDrawable
     {
@@ -68,6 +69,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         private int lastCheckedRevision = -1;
         private readonly LyricFontResolutionCache lyricFontResolution = new LyricFontResolutionCache();
         private string? lyricFontFamily;
+
+
+        // The gameplay syllable-marker setting (backlog 225), which the rows' rest view follows
+        // (backlog 378): off, a row at rest shows its plain text with no marks. Defaults on, so a
+        // panel built with no ruleset config (a bare test scene) draws them like gameplay does.
+        private readonly Bindable<bool> syllableMarkers = new Bindable<bool>(true);
 
         public LineListPanel()
         {
@@ -120,6 +127,24 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
             lyricViewButton.Enabled.Value = false;
         }
 
+        [BackgroundDependencyLoader]
+        private void load(IRulesetConfigCache? configCache)
+        {
+            TypeBeatRulesetConfigManager? config;
+
+            try
+            {
+                config = configCache?.GetConfigFor(new TypeBeatRuleset()) as TypeBeatRulesetConfigManager;
+            }
+            catch
+            {
+                // Config unavailable (cache not loaded, ruleset unregistered): keep the default.
+                config = null;
+            }
+
+            config?.BindWith(TypeBeatRulesetSetting.ShowSyllableMarkers, syllableMarkers);
+        }
+
         protected override void Update()
         {
             base.Update();
@@ -151,9 +176,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
                 lastCheckedLanguage = language;
                 lastCheckedRevision = snapshot.Revision;
             }
-            lyricViewButton.Text = state.ShowOriginalLyrics.Value ? "Lyrics: Original" : "Lyrics: Romanized";
+            string buttonText = state.ShowOriginalLyrics.Value ? "Lyrics: Original" : "Lyrics: Romanized";
 
-            if (!current.SequenceEqual(displayed))
+            if (lyricViewButton.Text != buttonText)
+                lyricViewButton.Text = buttonText;
+
+            if (!sameAsDisplayed(current))
             {
                 displayed.Clear();
                 displayed.AddRange(current);
@@ -161,7 +189,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
                 rows.Clear();
 
                 foreach (var hitObject in current)
-                    rows.Add(new LineRow(hitObject, lyricFontFamily));
+                    rows.Add(new LineRow(hitObject, syllableMarkers, lyricFontFamily));
             }
 
             // A tap-timing pass shows only the section it is recording. Alpha 0 makes a row
@@ -172,9 +200,102 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
             // being updated, so a row that hid itself could never bring itself back when the pass
             // ended. The panel is always present, so this restores every row the frame the scope
             // clears, whichever way the pass exited.
-            foreach (var row in rows)
-                row.Alpha = state.HiddenByTapScope(row.HitObject) ? 0 : 1;
+            var children = rows.Children;
+
+            for (int i = 0; i < children.Count; i++)
+                children[i].Alpha = state.HiddenByTapScope(children[i].HitObject) ? 0 : 1;
         }
+
+        private bool sameAsDisplayed(IReadOnlyList<TypeBeatHitObject> current)
+        {
+            if (current.Count != displayed.Count)
+                return false;
+
+            for (int i = 0; i < current.Count; i++)
+            {
+                if (current[i] != displayed[i])
+                    return false;
+            }
+
+            return true;
+        }
+
+        #region The rest view: plain text plus gap marks (backlog 378)
+
+        /// <summary>
+        /// A row's REST text: its pipe form (<see cref="TypeBeatEditorOperations.PipeDisplayText"/>)
+        /// with every <see cref="Typeability.SPLIT_MARKER"/> removed, i.e. the words as gameplay
+        /// spells them. The same string instance when there is no pipe to remove.
+        /// </summary>
+        public static string RestTextOf(string pipeText) =>
+            pipeText.IndexOf(Typeability.SPLIT_MARKER) < 0 ? pipeText : pipeText.Replace(Typeability.SPLIT_MARKER.ToString(), string.Empty);
+
+        /// <summary>
+        /// The REST text's gaps that carry a syllable mark: for each pipe of
+        /// <paramref name="pipeText"/>, the index in <see cref="RestTextOf"/> of the character the
+        /// pipe stands in FRONT of, so the mark is drawn at that character's left edge exactly as
+        /// gameplay draws a mark at its cell's left edge. Ascending, distinct, and only ever a real
+        /// gap (never the text's own leading edge or past its end).
+        /// </summary>
+        public static int[] RestGapsOf(string pipeText)
+        {
+            int pipes = 0;
+
+            foreach (char c in pipeText)
+            {
+                if (c == Typeability.SPLIT_MARKER)
+                    pipes++;
+            }
+
+            if (pipes == 0)
+                return Array.Empty<int>();
+
+            int plainLength = pipeText.Length - pipes;
+            var gaps = new List<int>(pipes);
+            int plain = 0;
+
+            foreach (char c in pipeText)
+            {
+                if (c != Typeability.SPLIT_MARKER)
+                {
+                    plain++;
+                    continue;
+                }
+
+                if (plain > 0 && plain < plainLength && (gaps.Count == 0 || gaps[^1] != plain))
+                    gaps.Add(plain);
+            }
+
+            return gaps.ToArray();
+        }
+
+        /// <summary>
+        /// Re-maps a caret position in the REST text to the pipe form the focused box shows, so a
+        /// click lands where it was made: the caret stays in front of the same character, and a
+        /// caret sitting in a marked gap lands in FRONT of that gap's pipe(s), never past them.
+        /// Clamped to the text.
+        /// </summary>
+        public static int PipeCaretFor(string pipeText, int restCaret)
+        {
+            if (restCaret <= 0)
+                return 0;
+
+            int plain = 0;
+
+            for (int i = 0; i < pipeText.Length; i++)
+            {
+                // Checked BEFORE the pipe is skipped, so a caret in a marked gap stops in front of it.
+                if (plain == restCaret)
+                    return i;
+
+                if (pipeText[i] != Typeability.SPLIT_MARKER)
+                    plain++;
+            }
+
+            return pipeText.Length;
+        }
+
+        #endregion
 
         /// <summary>Brings the active line's row into view (called by the screen on line change).</summary>
         public void ScrollToActive()
@@ -205,6 +326,41 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
         /// <summary>One list row. Public so scene tests can address a specific line's row.</summary>
         public partial class LineRow : CompositeDrawable
         {
+            /// <summary>
+            /// The rest view's syllable mark height as a fraction of the row's glyph height. Gameplay's
+            /// <see cref="LyricLineDisplay.SYLLABLE_MARKER_HEIGHT"/> (0.09) is tuned for a lyric drawn at
+            /// 40 px and more; on this 15 px row it came to about a pixel and a half and read as dirt on
+            /// the screen (owner, 2026-10-03). Three times that keeps the same wedge shape at a size the
+            /// eye finds; the band clamp in <see cref="LyricLineDisplay.SyllableMarkerGeometry"/> still
+            /// keeps it inside the box, so a row too short for it shows the largest mark that fits.
+            /// </summary>
+            public const float REST_MARKER_HEIGHT = LyricLineDisplay.SYLLABLE_MARKER_HEIGHT * 3f;
+
+            /// <summary>
+            /// How far the rest mark may rise into the glyph row, as a fraction of the row's height.
+            /// The 28 px box leaves only three or four pixels under the glyph row, which is not enough
+            /// for a legible mark on its own. The bottom fifth of the row is descender space, and the
+            /// mark's apex sits in an inter-character GAP where no glyph has ink, so letting the mark
+            /// start there costs nothing it could collide with. Gameplay has its sweep rail band and
+            /// needs no such allowance.
+            /// </summary>
+            public const float REST_MARKER_RISE = 0.2f;
+
+            /// <summary>
+            /// The multi-selection CORNER NOTCH (backlog 391): a small solid right triangle that
+            /// fills the row's top-left corner, shown on every row of a Ctrl/Shift selection so the
+            /// section is unmistakable at a glance. A 0.25-lightened row and an unselected row read as
+            /// the same gray, so the owner asked for a colour mark rather than a brighter tint. Its
+            /// LEG length (the two equal sides along the top and left edges), in pixels.
+            /// </summary>
+            public const float SELECTION_NOTCH_LEG = 8f;
+
+            /// <summary>
+            /// How far the notch is inset from the row's top-left before it is drawn, so it clears the
+            /// row's 4 px rounded corner (the rounded mask would otherwise clip the triangle's point).
+            /// </summary>
+            public const float SELECTION_NOTCH_INSET = 4f;
+
             public readonly TypeBeatHitObject HitObject;
 
             [Resolved]
@@ -218,19 +374,61 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
 
             private readonly Box background;
             private readonly FillFlowContainer body;
+            private readonly Triangle selectionNotch;
             private OsuSpriteText indexText = null!;
             private OsuSpriteText timeText = null!;
-            private OsuTextBox textBox = null!;
+            private LineTextBox textBox = null!;
             private OsuSpriteText originalCaption = null!;
             private bool? renderedOriginalView;
             private string? lyricFontFamily;
+            private readonly IBindable<bool> syllableMarkers;
+
+            // The row's strings are rebuilt only when what they are built from changes: the line
+            // (immutable, so a new reference is the only way its text, words or start move), its
+            // index and the view. An idle row allocates nothing.
+            private LyricLine? builtLine;
+            private int builtIndex = -1;
+            private bool builtShowOriginal;
+
+            // What the box shows while FOCUSED: the pipe form, the editing syntax (or the line's
+            // original in the original view). Also the committed text an edit is compared against.
+            private string display = string.Empty;
+
+            // What the box shows at REST (backlog 378): the pipe form with its pipes removed, the
+            // splits drawn instead as gameplay's gap triangles at restGaps. The original view has no
+            // pipes, so there the two forms are the same string and there are no gaps.
+            private string restText = string.Empty;
+            private int[] restGaps = Array.Empty<int>();
+            private string caption = string.Empty;
 
             /// <summary>The caption over the text box: the line's ORIGINAL text (backlog 330), or empty.</summary>
             public string OriginalCaptionText => originalCaption.Text.ToString();
 
-            public LineRow(TypeBeatHitObject hitObject, string? lyricFontFamily = null)
+            /// <summary>The row's text box (for scene tests).</summary>
+            public OsuTextBox TextBox => textBox;
+
+            /// <summary>The rest view's syllable marks currently drawn, in gap order (for scene tests).</summary>
+            public IEnumerable<Drawable> VisibleRestMarkers => textBox.VisibleRestMarkers;
+
+            /// <summary>The drawable of character <paramref name="index"/> of the text the box shows (for scene tests).</summary>
+            public Drawable CharacterDrawable(int index) => textBox.CharacterDrawable(index);
+
+            /// <summary>The flow the box lays its characters out in (for scene tests).</summary>
+            public FillFlowContainer TextFlowDrawable => textBox.TextFlowDrawable;
+
+            /// <summary>
+            /// The multi-selection corner notch (backlog 391), for scene tests: Alpha 1 exactly while
+            /// this row is a member of <see cref="LyricEditState.MultiSelectedLines"/>, 0 otherwise.
+            /// </summary>
+            public Drawable SelectionNotch => selectionNotch;
+
+            /// <summary>The row's background box, for scene tests asserting the selection tint.</summary>
+            public Box Background => background;
+
+            public LineRow(TypeBeatHitObject hitObject, IBindable<bool>? syllableMarkers = null, string? lyricFontFamily = null)
             {
                 HitObject = hitObject;
+                this.syllableMarkers = syllableMarkers ?? new Bindable<bool>(true);
                 this.lyricFontFamily = lyricFontFamily;
 
                 RelativeSizeAxes = Axes.X;
@@ -255,6 +453,28 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
                             RelativeSizeAxes = Axes.X,
                             AutoSizeAxes = Axes.Y,
                             Direction = FillDirection.Vertical,
+                        },
+                        // The multi-selection corner notch (backlog 391): a small solid right triangle
+                        // filling the row's top-left corner, on TOP of the background (so the tint
+                        // cannot hide it), inside this masked container. The Triangle shape draws
+                        // apex-up with a horizontal base, so a right isoceles corner wedge is built by
+                        // anchoring the apex (Origin = TopCentre) on the corner point and rotating it
+                        // 45 degrees clockwise: the base then lies on the corner's diagonal and the two
+                        // legs (length SELECTION_NOTCH_LEG) run along the top and left edges, which is
+                        // the wedge the owner drew. Alpha drives its visibility, so it is not present
+                        // on an unselected row.
+                        selectionNotch = new Triangle
+                        {
+                            Anchor = Anchor.TopLeft,
+                            Origin = Anchor.TopCentre,
+                            Position = new Vector2(SELECTION_NOTCH_INSET),
+                            Size = new Vector2(SELECTION_NOTCH_LEG * MathF.Sqrt(2), SELECTION_NOTCH_LEG * MathF.Sqrt(2) / 2),
+                            Colour = TypeBeatStyle.SungAccent,
+                            Rotation = 45,
+                            // Never part of the layout, so a corner wedge cannot grow the row's
+                            // auto-sized box (same treatment as the rest markers).
+                            BypassAutoSizeAxes = Axes.Both,
+                            Alpha = 0,
                         },
                     },
                 };
@@ -340,8 +560,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
 
                 if (!TypeBeatEditorOperations.SetLineText(editorBeatmap, HitObject, textBox.Text))
                 {
-                    // Normalized to empty; refuse and flash (delete the line instead).
-                    textBox.Text = TypeBeatEditorOperations.PipeDisplayText(HitObject.Line);
+                    // Normalized to empty; refuse and flash (delete the line instead). The pipe form
+                    // while the box still has focus; at rest, Update puts the rest view back.
+                    textBox.Text = textBox.HasFocus ? TypeBeatEditorOperations.PipeDisplayText(HitObject.Line) : restText;
                     background.FlashColour(TypeBeatStyle.ErrorChar, 400, Easing.OutQuint);
                 }
             }
@@ -375,27 +596,56 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
             {
                 base.Update();
 
-                indexText.Text = (HitObject.LineIndex + 1).ToString();
-                timeText.Text = formatTime(HitObject.Line.StartTime);
+                if (builtIndex != HitObject.LineIndex)
+                {
+                    builtIndex = HitObject.LineIndex;
+                    indexText.Text = (builtIndex + 1).ToString();
+                }
 
-                // The box shows the line in its PIPE form: a subdivided word carries a '|' at each
-                // of its syllable splits ("ap|ple"), which is both how the split is displayed and
-                // how it is edited (see TypeBeatEditorOperations.SetLineText). The pipe is a
-                // reserved character of this surface only; it is stripped on commit and never
-                // reaches the stored lyric or a gameplay cell.
-                string romanized = TypeBeatEditorOperations.PipeDisplayText(HitObject.Line);
-                string? original = TypeBeatEditorOperations.OriginalCaption(HitObject.Line);
-                bool originalView = state.ShowOriginalLyrics.Value && original != null;
-                string display = originalView ? original! : romanized;
-                bool modeChanged = renderedOriginalView != state.ShowOriginalLyrics.Value;
-                renderedOriginalView = state.ShowOriginalLyrics.Value;
+                bool showOriginal = state.ShowOriginalLyrics.Value;
+
+                if (!ReferenceEquals(builtLine, HitObject.Line) || builtShowOriginal != showOriginal)
+                {
+                    var line = HitObject.Line;
+
+                    if (!ReferenceEquals(builtLine, line))
+                        timeText.Text = formatTime(line.StartTime);
+
+                    // The box shows the line in its PIPE form: a subdivided word carries a '|' at each
+                    // of its syllable splits ("ap|ple"), which is both how the split is displayed and
+                    // how it is edited (see TypeBeatEditorOperations.SetLineText). The pipe is a
+                    // reserved character of this surface only; it is stripped on commit and never
+                    // reaches the stored lyric or a gameplay cell.
+                    string romanized = TypeBeatEditorOperations.PipeDisplayText(line);
+                    string? original = TypeBeatEditorOperations.OriginalCaption(line);
+                    bool originalView = showOriginal && original != null;
+                    display = originalView ? original! : romanized;
+                    caption = originalView ? $"Romanized: {romanized}" : captionFor(line);
+
+                    // At rest the box spells the words as gameplay does and marks each split with
+                    // gameplay's triangle in the gap; the pipe form comes back only on focus.
+                    restText = originalView ? display : RestTextOf(romanized);
+                    restGaps = originalView ? Array.Empty<int>() : RestGapsOf(romanized);
+                    textBox.SetRestGaps(restGaps);
+
+                    builtLine = line;
+                    builtShowOriginal = showOriginal;
+                }
+
+                bool modeChanged = renderedOriginalView != showOriginal;
+                renderedOriginalView = showOriginal;
 
                 textBox.ReadOnly = false;
 
-                if ((!textBox.HasFocus || modeChanged) && textBox.Text != display)
-                    textBox.Text = display;
+                bool focused = textBox.HasFocus;
+                string shown = focused ? display : restText;
 
-                string caption = originalView ? $"Romanized: {romanized}" : captionFor(HitObject.Line);
+                if ((!focused || modeChanged) && textBox.Text != shown)
+                    textBox.Text = shown;
+
+                // The marks belong to the rest text only: hidden while focused (the pipes are the
+                // marks there), with the setting off, and for the frame a commit's text is still up.
+                textBox.RestMarkersShown = !focused && syllableMarkers.Value && textBox.Text == restText;
 
                 if (originalCaption.Text != caption)
                 {
@@ -410,6 +660,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
                     : multiSelected
                         ? TypeBeatStyle.PanelBackground.Lighten(0.25f)
                         : TypeBeatStyle.Background;
+
+                // The coloured corner notch (backlog 391) carries the multi-selection, since the
+                // 0.25 tint reads as the same gray as an unselected row. Shown on EVERY member,
+                // including the active one when it is in the set (which keeps its own brighter
+                // tint too), and cleared the frame a row leaves the set.
+                selectionNotch.Alpha = multiSelected ? 1 : 0;
             }
 
             /// <summary>
@@ -475,11 +731,199 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
             /// there, and Redo is swallowed so it cannot vaporise the edit either. A pristine
             /// focused box passes both through, so the next Ctrl+Z steps into the editor history
             /// as usual (the layered-undo convention).
+            ///
+            /// <para>It also carries the REST view (backlog 378). Unfocused, the row gives it the
+            /// line's plain text and the gaps its syllable splits fall in, and it draws gameplay's
+            /// triangle in each gap: an overlay in the text container, beside the character flow and
+            /// bypassing auto-size, so it consumes no width and scrolls with the text. On focus it
+            /// swaps itself to the pipe form (<see cref="CommittedText"/>) before any key can land,
+            /// with the click's caret re-mapped from the plain text to the pipe text. Setting
+            /// <see cref="osu.Framework.Graphics.UserInterface.TextBox.Text"/> is not a commit (the
+            /// framework records it as the last committed text), and the row's commit compares
+            /// against the pipe form, so a focus gain alone never edits the line.</para>
             /// </summary>
             private partial class LineTextBox : OsuTextBox
             {
                 /// <summary>The line's committed pipe-form text, the value an in-progress edit reverts to.</summary>
                 public Func<string> CommittedText { get; init; } = () => string.Empty;
+
+                private readonly List<Triangle> restMarkers = new List<Triangle>();
+                private int[] restGaps = Array.Empty<int>();
+                private bool restMarkersShown;
+
+                // The layout the marks were last placed against. They are re-placed only when one
+                // of these moves, so an idle row reads four floats and does nothing else.
+                private string? placedText;
+                private int[]? placedGaps;
+                private Vector2 placedFlowSize = new Vector2(-1);
+                private float placedContainerHeight = -1;
+
+                // The character a not-yet-focused click put the caret in front of, in the REST text,
+                // carried from the mouse-down (which positions the caret) to the focus (which the
+                // framework grants on the click that follows it).
+                private int? pendingRestCaret;
+                private bool placingCaret;
+
+                /// <summary>The gaps (indices into the rest text) the row's rest view marks. Cheap to call with the same array.</summary>
+                public void SetRestGaps(int[] gaps)
+                {
+                    if (ReferenceEquals(gaps, restGaps))
+                        return;
+
+                    restGaps = gaps;
+
+                    while (restMarkers.Count < gaps.Length)
+                    {
+                        var marker = new Triangle
+                        {
+                            // Gameplay's mark (LyricLineDisplay.addSyllableMarkers): same colour,
+                            // apex up, its axis on the gap, and never part of the layout.
+                            Colour = TypeBeatStyle.UntypedChar,
+                            Anchor = Anchor.TopLeft,
+                            Origin = Anchor.TopCentre,
+                            BypassAutoSizeAxes = Axes.Both,
+                            Alpha = 0,
+                        };
+
+                        restMarkers.Add(marker);
+                        TextContainer.Add(marker);
+                    }
+
+                    placedGaps = null;
+                    applyRestMarkerAlpha();
+                }
+
+                /// <summary>Whether the rest view's marks are drawn (the row's rest state and the marker setting).</summary>
+                public bool RestMarkersShown
+                {
+                    set
+                    {
+                        if (restMarkersShown == value)
+                            return;
+
+                        restMarkersShown = value;
+                        placedGaps = null;
+                        applyRestMarkerAlpha();
+                    }
+                }
+
+                public IEnumerable<Drawable> VisibleRestMarkers => restMarkers.Where(m => m.Alpha > 0);
+
+                public Drawable CharacterDrawable(int index) => TextFlow.Children[index];
+
+                public FillFlowContainer TextFlowDrawable => TextFlow;
+
+                private void applyRestMarkerAlpha()
+                {
+                    for (int i = 0; i < restMarkers.Count; i++)
+                        restMarkers[i].Alpha = restMarkersShown && i < restGaps.Length ? 1 : 0;
+                }
+
+                protected override void UpdateAfterChildren()
+                {
+                    base.UpdateAfterChildren();
+
+                    // The flow has laid its characters out by now (it is a child), so their left
+                    // edges are final for this frame.
+                    if (!restMarkersShown || restGaps.Length == 0)
+                        return;
+
+                    var flow = TextFlow;
+                    var characters = flow.Children;
+
+                    if (characters.Count != Text.Length)
+                        return;
+
+                    if (ReferenceEquals(placedText, Text) && ReferenceEquals(placedGaps, restGaps)
+                                                           && placedFlowSize == flow.DrawSize && placedContainerHeight == DrawHeight)
+                        return;
+
+                    // The vertical rule is gameplay's (LyricLineDisplay.SyllableMarkerGeometry): hung
+                    // from the bottom of the glyph row. The row has no sweep rail, so the band the
+                    // clamp keeps the mark inside is what is left of the box below the glyph row.
+                    float glyphHeight = flow.DrawHeight;
+                    float flowTop = flow.DrawPosition.Y;
+                    // The room is measured to the BOX's bottom edge, in the text container's space:
+                    // the container is only as tall as the glyph row and sits centred in the 28 px
+                    // box, so its own height leaves no band at all (measured: 15 of 28, mark 1 px).
+                    float rise = glyphHeight * REST_MARKER_RISE;
+                    float boxBottom = TextContainer.ToLocalSpace(ScreenSpaceDrawQuad.BottomLeft).Y;
+                    float band = boxBottom - (flowTop + glyphHeight) + rise;
+                    var geometry = LyricLineDisplay.SyllableMarkerGeometry(glyphHeight, band, REST_MARKER_HEIGHT);
+
+                    for (int k = 0; k < restGaps.Length; k++)
+                    {
+                        int gap = restGaps[k];
+
+                        if (gap <= 0 || gap >= characters.Count)
+                            continue;
+
+                        restMarkers[k].Size = new Vector2(geometry.Width, geometry.Height);
+                        restMarkers[k].Position = new Vector2(flow.DrawPosition.X + characters[gap].DrawPosition.X, flowTop + geometry.Top - rise);
+                    }
+
+                    placedText = Text;
+                    placedGaps = restGaps;
+                    placedFlowSize = flow.DrawSize;
+                    placedContainerHeight = DrawHeight;
+                }
+
+                protected override bool OnMouseDown(MouseDownEvent e)
+                {
+                    // The framework's own rule (the character whose midpoint the pointer is past),
+                    // read against the REST text the click was made on.
+                    if (!HasFocus)
+                    {
+                        float x = TextFlow.ToLocalSpace(e.ScreenSpaceMousePosition).X;
+                        int index = 0;
+
+                        foreach (var character in TextFlow.Children)
+                        {
+                            if (character.DrawPosition.X + character.DrawSize.X / 2 > x)
+                                break;
+
+                            index++;
+                        }
+
+                        pendingRestCaret = index;
+                    }
+
+                    return base.OnMouseDown(e);
+                }
+
+                protected override void OnFocus(FocusEvent e)
+                {
+                    base.OnFocus(e);
+
+                    int? restCaret = pendingRestCaret;
+                    pendingRestCaret = null;
+
+                    string edit = CommittedText();
+
+                    if (Text == edit)
+                        return;
+
+                    // A click re-maps onto the pipe form only when the box really was showing that
+                    // form's rest text; anything else (a tab focus) leaves the caret at the end.
+                    bool remap = restCaret != null && RestTextOf(edit) == Text;
+
+                    Text = edit;
+
+                    if (remap)
+                    {
+                        placingCaret = true;
+                        MoveCursorBy(-Text.Length);
+                        MoveCursorBy(PipeCaretFor(edit, restCaret!.Value));
+                        placingCaret = false;
+                    }
+                }
+
+                protected override void OnCaretMoved(bool selecting)
+                {
+                    // The re-map is part of the click, which already gave its feedback.
+                    if (!placingCaret)
+                        base.OnCaretMoved(selecting);
+                }
 
                 public override bool OnPressed(KeyBindingPressEvent<PlatformAction> e)
                 {

@@ -222,8 +222,10 @@ namespace typebeat.Game.Beatmaps
             targetBeatmapSet.Beatmaps.Add(newBeatmap.BeatmapInfo);
             newBeatmap.BeatmapInfo.BeatmapSet = targetBeatmapSet;
 
-            // Images and background videos belong to the set. A new difficulty must inherit
-            // both, including the video's sync, without sharing mutable storyboard state.
+            // Background videos belong to the set, and so does the image unless the reference was given
+            // its own (the setup screen's per-difficulty tick), in which case the new difficulty starts
+            // on the reference's image. It inherits both, including the video's sync, without sharing
+            // mutable storyboard state.
             newBeatmap.Metadata.BackgroundFile = referenceWorkingBeatmap.BackgroundFile;
             var storyboard = new Storyboard();
             if (referenceWorkingBeatmap.Storyboard.PrimaryVideo is StoryboardVideo video)
@@ -693,6 +695,35 @@ namespace typebeat.Game.Beatmaps
             transaction.Commit();
         });
 
+        /// <summary>
+        /// The stored aligner vocal mode of a beatmap set (see <see cref="BeatmapSetInfo.AlignerVocalMode"/>),
+        /// read through realm for the same reason as <see cref="GetIntroPoolInclusion"/>. A set realm does not
+        /// hold (a new map not yet saved) reads as <see cref="AlignerVocalMode.Aligned"/>.
+        /// </summary>
+        public AlignerVocalMode GetAlignerVocalMode(BeatmapSetInfo beatmapSetInfo)
+            => Realm.Run(r => r.Find<BeatmapSetInfo>(beatmapSetInfo.ID)?.AlignerVocalMode ?? AlignerVocalMode.Aligned);
+
+        /// <summary>
+        /// Stores the aligner vocal mode of a beatmap set. Writes realm only, never a beatmap file, so the
+        /// choice re-encodes nothing. A set realm does not hold is left alone.
+        /// </summary>
+        public void SetAlignerVocalMode(BeatmapSetInfo beatmapSetInfo, AlignerVocalMode mode) => SetAlignerVocalMode(beatmapSetInfo.ID, mode);
+
+        /// <inheritdoc cref="SetAlignerVocalMode(BeatmapSetInfo, AlignerVocalMode)"/>
+        public void SetAlignerVocalMode(Guid beatmapSetId, AlignerVocalMode mode) => Realm.Run(r =>
+        {
+            var beatmapSet = r.Find<BeatmapSetInfo>(beatmapSetId);
+
+            if (beatmapSet == null)
+                return;
+
+            using var transaction = r.BeginWrite();
+
+            beatmapSet.AlignerVocalMode = mode;
+
+            transaction.Commit();
+        });
+
         #region Implementation of ICanAcceptFiles
 
         public Task Import(params string[] paths) => beatmapImporter.Import(paths);
@@ -701,6 +732,18 @@ namespace typebeat.Game.Beatmaps
 
         public Task<IEnumerable<Live<BeatmapSetInfo>>> Import(ProgressNotification notification, ImportTask[] tasks, ImportParameters parameters = default) =>
             beatmapImporter.Import(notification, tasks, parameters);
+
+        /// <summary>
+        /// Imports archives exactly as <see cref="Import(ImportTask[], ImportParameters)"/> does (one posted
+        /// progress notification), but hands back the imported sets, for a caller that stores user data on
+        /// them afterwards (the song importer's aligner vocal mode).
+        /// </summary>
+        public Task<IEnumerable<Live<BeatmapSetInfo>>> ImportReturningSets(params string[] paths)
+        {
+            var notification = new ProgressNotification { State = ProgressNotificationState.Active };
+            PostNotification?.Invoke(notification);
+            return Import(notification, paths.Select(p => new ImportTask(p)).ToArray());
+        }
 
         public Task<Live<BeatmapSetInfo>?> Import(ImportTask task, ImportParameters parameters = default, CancellationToken cancellationToken = default) =>
             beatmapImporter.Import(task, parameters, cancellationToken);

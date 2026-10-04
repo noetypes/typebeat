@@ -23,6 +23,7 @@ using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
 using typebeat.Game.Rulesets.TypeBeat.Configuration;
 using typebeat.Game.Rulesets.TypeBeat.Gameplay;
 using osuTK;
+using osuTK.Graphics;
 
 namespace typebeat.Game.Rulesets.TypeBeat.UI
 {
@@ -286,10 +287,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
 
             lineContainer = new Container { RelativeSizeAxes = Axes.Both };
 
+            // The map's freestyle colour (backlog 384), read once like the font: absent is the default.
+            Color4 freestyleColour = FreestyleColourKey.Resolve(drawableRuleset?.Beatmap.FreestyleColour);
+
             for (int i = 0; i < lines.Count; i++)
             {
 
-                var d = new LyricLineDisplay(lines[i], FontSize, lyricFont, paceBands[i])
+                var d = new LyricLineDisplay(lines[i], FontSize, lyricFont, paceBands[i], freestyleColour)
 
                 {
                     Anchor = Anchor.Centre,
@@ -336,6 +340,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             };
 
             engine.AuthoredSyllablesOnlyChanged += regroup;
+            // The target era switches the same way (a replay recorded before AlignSubdivisionTargets
+            // flips the cells back to the legacy targets), and the bands are laid from those targets.
+            engine.AlignSubdivisionTargetsChanged += regroup;
 
             // Carets are positioned via absolute points in this stage's top-left-origin
             // local space (from ToSpaceOfOtherDrawable), so they must anchor top-left.
@@ -1519,7 +1526,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             engine.Rewound -= onRewound;
 
             if (regroup != null)
+            {
                 engine.AuthoredSyllablesOnlyChanged -= regroup;
+                engine.AlignSubdivisionTargetsChanged -= regroup;
+            }
 
             base.Dispose(isDisposing);
         }

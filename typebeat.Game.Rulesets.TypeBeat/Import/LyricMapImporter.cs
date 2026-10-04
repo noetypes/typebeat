@@ -205,6 +205,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
                 CreateNoWindow = true,
             };
 
+            RunPythonInUtf8(psi);
             psi.ArgumentList.Add("-c");
             psi.ArgumentList.Add($"import {ALIGNER_IMPORTS}");
 
@@ -294,6 +295,24 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Every python we launch (the aligner, the import probe, the setup script's children) runs
+        /// in UTF-8. Python on Windows otherwise writes stdout in the console code page, cp1252 on a
+        /// Western install, and the first non-Latin character it prints raises UnicodeEncodeError:
+        /// demucs prints "Separating track {path}", so a Japanese or Chinese song title killed the
+        /// separation before it started and the import reported the aligner as unavailable (a user
+        /// log, 2026-10-02). PYTHONUTF8 covers the child processes python spawns too, which is where
+        /// demucs runs; the reader encodings match so the log tail is readable rather than mojibake.
+        /// Set only on a redirected start info (the encodings are invalid otherwise).
+        /// </summary>
+        public static void RunPythonInUtf8(ProcessStartInfo psi)
+        {
+            psi.Environment["PYTHONUTF8"] = "1";
+            psi.Environment["PYTHONIOENCODING"] = "utf-8";
+            psi.StandardOutputEncoding = Encoding.UTF8;
+            psi.StandardErrorEncoding = Encoding.UTF8;
         }
 
         public static string PythonExeFor(string lyricLabDir)
@@ -396,6 +415,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
+            RunPythonInUtf8(psi);
 
             if (OperatingSystem.IsWindows())
             {
@@ -597,7 +617,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
             string? configuredLyricLabPath, IEnumerable<string> startDirectories,
             Action<string> progress, CancellationToken token,
             bool useAutomaticAlignment = true, IAudioTrackExtractor? audioExtractor = null, string? language = null,
-            bool highQualityAlignment = false)
+            bool highQualityAlignment = false, AlignerVocalMode vocalMode = AlignerVocalMode.Aligned)
         {
             if (!File.Exists(audioPath))
                 return LyricImportResult.Fail($"audio file not found: {audioPath}");
@@ -664,15 +684,30 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
             // continue to detect a language from the lyric script.
             language ??= LyricOriginals.DetectLanguage(new[] { lyricsContent });
 
-            (LyricImportResult result, string? timing) = await ProduceTimingJsonAsync(
+            (LyricImportResult result, string? timing, string? vocalsStemSource) = await produceTimingJsonAsync(
                 effectiveAudioPath, lyricsContent, artist, title, configuredLyricLabPath, startDirectories, progress, token, useAutomaticAlignment,
-                language, highQualityAlignment).ConfigureAwait(false);
+                language, highQualityAlignment, vocalMode).ConfigureAwait(false);
 
             if (!result.Success || timing == null)
                 return result;
 
             progress("packaging map");
-            var packaged = PackageOsz(oszPath, artist, title, effectiveAudioPath, timing, lyricsContent, videoSourcePath, language, progress);
+
+            // The aligner writes the isolated vocals stem as 16 kHz mono PCM (backlog 392); the
+            // archive carries it re-encoded to Ogg Vorbis when an encoder is available, because a map
+            // a mapper downloads should not carry ~1.9 MB a minute for a view-only surface. When no
+            // encoder is on the machine the wav is packaged as it stands; the editor reads either.
+            string? vocalsStemSourceFile = vocalsStemSource;
+
+            if (vocalsStemSource != null)
+            {
+                // No encoder leaves the wav as it stands (already beside the .osz, cleaned up with
+                // the import temp dir); otherwise the smaller Ogg is packaged.
+                vocalsStemSourceFile = await EncodedVocalsStemAsync(vocalsStemSource, oszDir, configuredLyricLabPath, startDirectories, token).ConfigureAwait(false)
+                                       ?? vocalsStemSource;
+            }
+
+            var packaged = PackageOsz(oszPath, artist, title, effectiveAudioPath, timing, lyricsContent, videoSourcePath, language, progress, vocalsStemSourceFile);
 
             // The timing step's own notice (an enhanced LRC's clamped stamps) rides with the
             // packaging summary rather than being replaced by it.
@@ -702,24 +737,48 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
         /// <remarks>The optional language is the one non-Latin lyrics are romanised under (backlog
         /// 330): the map's own when the caller has one, else null to detect it from the lyrics'
         /// script. <paramref name="highQualityAlignment"/> runs the aligner at its full tier (see
-        /// <see cref="AlignerArguments"/>) and changes nothing on the TTML or line-stamp paths.</remarks>
+        /// <see cref="AlignerArguments"/>) and changes nothing on the TTML or line-stamp paths;
+        /// <paramref name="vocalMode"/> is the map set's stored aligner vocal mode, which likewise
+        /// reaches only the aligner's command line.</remarks>
         public static async Task<(LyricImportResult Result, string? TimingJson)> ProduceTimingJsonAsync(
             string audioPath, string lyricsContent, string artist, string title,
             string? configuredLyricLabPath, IEnumerable<string> startDirectories,
             Action<string> progress, CancellationToken token, bool useAutomaticAlignment = true,
-            string? language = null, bool highQualityAlignment = false)
+            string? language = null, bool highQualityAlignment = false, AlignerVocalMode vocalMode = AlignerVocalMode.Aligned)
+        {
+            // The editor's in-place re-align uses the stem-less view: it edits the lines of a map
+            // already on disk and never re-packages, so a stem this run produces is dropped.
+            (LyricImportResult result, string? timing, _) = await produceTimingJsonAsync(audioPath, lyricsContent, artist, title, configuredLyricLabPath,
+                startDirectories, progress, token, useAutomaticAlignment, language, highQualityAlignment, vocalMode).ConfigureAwait(false);
+
+            return (result, timing);
+        }
+
+        /// <summary>
+        /// The core of the timing ladder, shared by <see cref="ProduceTimingJsonAsync"/> (which drops
+        /// the stem) and <see cref="BuildOszAsync"/> (which keeps it). The third element is the
+        /// isolated vocals stem the aligner wrote (backlog 392): the file path when this run produced
+        /// one, null when it did not (no separation, an older aligner, or a non-aligner path). The
+        /// stem is kept ONLY by the packaging import; the editor's in-place re-align drops it, since
+        /// the map's folder is what an import writes and the editor does not own it.
+        /// </summary>
+        private static async Task<(LyricImportResult Result, string? TimingJson, string? VocalsStemPath)> produceTimingJsonAsync(
+            string audioPath, string lyricsContent, string artist, string title,
+            string? configuredLyricLabPath, IEnumerable<string> startDirectories,
+            Action<string> progress, CancellationToken token, bool useAutomaticAlignment = true,
+            string? language = null, bool highQualityAlignment = false, AlignerVocalMode vocalMode = AlignerVocalMode.Aligned)
         {
             language ??= LyricOriginals.DetectLanguage(new[] { lyricsContent });
 
             if (!File.Exists(audioPath))
-                return (LyricImportResult.Fail($"audio file not found: {audioPath}"), null);
+                return (LyricImportResult.Fail($"audio file not found: {audioPath}"), null, null);
 
             // Empty lyrics is its own outcome; before this it fell all the way through to the
             // confusing "no aligner available" message.
             if (string.IsNullOrWhiteSpace(lyricsContent))
                 return (LyricImportResult.Fail(
                     "the lyrics are empty, add the song's words (ideally with [mm:ss.xx] line "
-                    + "timestamps) before importing."), null);
+                    + "timestamps) before importing."), null, null);
 
             // A TTML is already word- (often syllable-) timed by its own producer, so it needs no
             // aligner, no audio and no line stamps: it is converted and used as it stands. Checked
@@ -730,10 +789,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
                 string? ttmlTiming = SynthesizeTimingJsonFromTtml(lyricsContent, language: language);
 
                 if (ttmlTiming == null)
-                    return (LyricImportResult.Fail("the .ttml produced no usable lyric lines."), null);
+                    return (LyricImportResult.Fail("the .ttml produced no usable lyric lines."), null, null);
 
                 progress("using the TTML's own word timing");
-                return (LyricImportResult.Ok(string.Empty), ttmlTiming);
+                return (LyricImportResult.Ok(string.Empty), ttmlTiming, null);
             }
 
             // An ENHANCED LRC (inline <mm:ss.xx> word stamps, backlog 356) is word-timed by its own
@@ -744,7 +803,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
                 string? wordTiming = SynthesizeTimingJsonFromEnhancedLrc(lyricsContent, language, out int clampedStamps);
 
                 if (wordTiming == null)
-                    return (LyricImportResult.Fail("the word-stamped LRC produced no usable lyric lines."), null);
+                    return (LyricImportResult.Fail("the word-stamped LRC produced no usable lyric lines."), null, null);
 
                 progress(ENHANCED_LRC_PROGRESS);
 
@@ -753,7 +812,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
                 if (clampNotice != null)
                     progress(clampNotice);
 
-                return (LyricImportResult.Ok(string.Empty) with { Notice = clampNotice }, wordTiming);
+                return (LyricImportResult.Ok(string.Empty) with { Notice = clampNotice }, wordTiming, null);
             }
 
             // Automatic alignment (the local aligner subprocess) is opt-in: off by default so an
@@ -769,7 +828,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
                           + "line needs one. Stamp the rest, or turn on \"automatic alignment\" to have the "
                           + "unstamped lines placed between your stamps."
                         : "these lyrics have no [mm:ss.xx] line timestamps. Add line stamps, or turn on "
-                          + "\"automatic alignment\" to have the words timed for you."), null);
+                          + "\"automatic alignment\" to have the words timed for you."), null, null);
 
                 return synthesizeFromLrc(lyricsContent, progress, language);
             }
@@ -786,8 +845,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
                 alignerUsable = await TryAdoptEnvironmentAsync(lyricLabDir, token).ConfigureAwait(false);
 
                 if (token.IsCancellationRequested)
-                    return (LyricImportResult.Fail("import cancelled"), null);
+                    return (LyricImportResult.Fail("import cancelled"), null, null);
             }
+
+            string? alignerFailure = null;
 
             if (alignerUsable)
             {
@@ -797,18 +858,19 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
 
                 try
                 {
-                    (LyricImportResult alignerResult, string? timingJson) = await runAlignerAsync(
-                        lyricLabDir!, audioPath, lyricsTemp, artist, title, lyricsContent, highQualityAlignment, progress, token).ConfigureAwait(false);
+                    (LyricImportResult alignerResult, string? timingJson, string? vocalsStem) = await runAlignerAsync(
+                        lyricLabDir!, audioPath, lyricsTemp, artist, title, lyricsContent, highQualityAlignment, vocalMode, progress, token).ConfigureAwait(false);
 
                     if (alignerResult.Success && timingJson != null)
                     {
                         progress("alignment complete");
-                        return (LyricImportResult.Ok(string.Empty), ImportSyllables.ApplyToTimingJson(RomaniseLines(FlagFreestyleLines(timingJson), language)));
+                        return (LyricImportResult.Ok(string.Empty), ImportSyllables.ApplyToTimingJson(RomaniseLines(FlagFreestyleLines(timingJson), language)), vocalsStem);
                     }
 
                     if (token.IsCancellationRequested)
-                        return (alignerResult, null);
+                        return (alignerResult, null, null);
 
+                    alignerFailure = alignerResult.Error;
                     progress($"aligner unavailable ({alignerResult.Error}), trying next option");
                 }
                 finally
@@ -834,32 +896,65 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
             // lines. It no longer offers signing in, which bought alignment and now buys nothing.
             if (!HasLineStamps(lyricsContent))
             {
-                return (LyricImportResult.Fail(
-                    (HasAnyLineStamp(lyricsContent)
-                        ? "no auto-aligner is available and only some lines have [mm:ss.xx] timestamps, "
-                          + "so the unstamped ones have no time to fall back on. "
-                        : "no auto-aligner is available and the lyrics have no [mm:ss.xx] line timestamps "
-                          + "to fall back on. ")
-                    + (needsRepair
-                        ? "The local auto-aligner's install is incomplete: repair it (Settings > Experimental > "
-                          + "Repair local auto-aligner), or add [mm:ss.xx] line stamps to the lyrics."
-                        : "Install the local auto-aligner (Settings > Experimental > "
-                          + "Install the local auto-aligner), or add [mm:ss.xx] line stamps to the lyrics.")), null);
+                return (LyricImportResult.Fail(NoFallbackFailureMessage(HasAnyLineStamp(lyricsContent), needsRepair, alignerFailure)), null, null);
             }
 
             return synthesizeFromLrc(lyricsContent, progress, language);
         }
 
+        /// <summary>
+        /// The failure shown when no word timing could be produced and the lyrics carry no line
+        /// stamps to fall back on. Three situations, three different next steps, so the sentence
+        /// names the one that applies: the aligner is not installed (install it), its install is
+        /// broken (repair it), or it IS installed and its run failed (retry, then repair and send the
+        /// log). The third used to read as the first, telling a player with a working install to
+        /// install it, which is the message that sent the 2026-10-02 log in.
+        /// </summary>
+        /// <param name="partialStamps">Some lines are stamped, so only the unstamped ones lack a time.</param>
+        /// <param name="needsRepair">The install is present but demonstrably incomplete.</param>
+        /// <param name="alignerFailure">The aligner's own error when it ran and exited non-zero; null when it never ran.</param>
+        public static string NoFallbackFailureMessage(bool partialStamps, bool needsRepair, string? alignerFailure)
+        {
+            string stamps = partialStamps
+                ? "only some lines have [mm:ss.xx] timestamps, so the unstamped ones have no time to fall back on. "
+                : "the lyrics have no [mm:ss.xx] line timestamps to fall back on. ";
+
+            if (alignerFailure != null)
+            {
+                return $"the local auto-aligner is installed but its run failed ({ShortAlignerFailure(alignerFailure)}), and {stamps}"
+                       + "Try the import again; if it keeps failing, repair the aligner (Settings > Experimental > "
+                       + "Repair local auto-aligner) and share the import log, or add [mm:ss.xx] line stamps to the lyrics.";
+            }
+
+            return "no auto-aligner is available and " + stamps
+                   + (needsRepair
+                       ? "The local auto-aligner's install is incomplete: repair it (Settings > Experimental > "
+                         + "Repair local auto-aligner), or add [mm:ss.xx] line stamps to the lyrics."
+                       : "Install the local auto-aligner (Settings > Experimental > "
+                         + "Install the local auto-aligner), or add [mm:ss.xx] line stamps to the lyrics.");
+        }
+
+        /// <summary>
+        /// The aligner's error for the sentence above: its tail is up to eight lines joined by " | ",
+        /// and the last of them is the exception that stopped it, which is the one worth reading.
+        /// Capped so a long path does not swallow the advice that follows.
+        /// </summary>
+        public static string ShortAlignerFailure(string error)
+        {
+            string last = error.Split(" | ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? error.Trim();
+            return last.Length <= 160 ? last : last[..157] + "...";
+        }
+
         /// <summary>Line-granularity timing straight from [mm:ss.xx] line stamps (no word timing).</summary>
-        private static (LyricImportResult Result, string? TimingJson) synthesizeFromLrc(string lyricsContent, Action<string> progress, string? language)
+        private static (LyricImportResult Result, string? TimingJson, string? VocalsStemPath) synthesizeFromLrc(string lyricsContent, Action<string> progress, string? language)
         {
             string? fallbackTiming = SynthesizeTimingJsonFromLrc(lyricsContent, language);
 
             if (fallbackTiming == null)
-                return (LyricImportResult.Fail("the line-stamped lyrics produced no usable lines."), null);
+                return (LyricImportResult.Fail("the line-stamped lyrics produced no usable lines."), null, null);
 
             progress("line-timed alignment ready (no word-level timing)");
-            return (LyricImportResult.Ok(string.Empty), fallbackTiming);
+            return (LyricImportResult.Ok(string.Empty), fallbackTiming, null);
         }
 
         /// <summary>
@@ -901,9 +996,17 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
         /// the offered update. Off, NOTHING is added rather than <c>--quality fast</c>: the script's
         /// own default is fast, and leaving the flag out keeps the ordinary run's command line
         /// exactly what an older script already accepts.</para>
+        ///
+        /// <para><paramref name="vocalMode"/> <see cref="AlignerVocalMode.Estimated"/> adds
+        /// <c>--vocal-mode estimated</c> on the same terms: only when the script is version 7 or newer
+        /// (<see cref="AlignerHasVocalModes"/>), and only when the lyrics carry a line stamp, since the
+        /// mode paces every line from its stamp (the script would ignore it on bare text anyway, and
+        /// leaving it out keeps that command line the one every version accepts).
+        /// <see cref="AlignerVocalMode.Aligned"/> adds nothing.</para>
         /// </summary>
         public static IReadOnlyList<string> AlignerArguments(
-            string lyricLabDir, string audioPath, string lyricsPath, string outDir, string lyricsContent, bool highQuality)
+            string lyricLabDir, string audioPath, string lyricsPath, string outDir, string lyricsContent, bool highQuality,
+            AlignerVocalMode vocalMode = AlignerVocalMode.Aligned)
         {
             var args = new List<string> { aligner_script, audioPath, lyricsPath, "-o", outDir };
 
@@ -928,11 +1031,90 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
                 args.Add("full");
             }
 
+            if (EstimatedVocalsApply(lyricLabDir, lyricsContent, vocalMode))
+            {
+                args.Add("--vocal-mode");
+                args.Add("estimated");
+            }
+
             return args;
         }
 
+        /// <summary>
+        /// Whether a run asked for <paramref name="vocalMode"/> actually passes
+        /// <c>--vocal-mode estimated</c>: the mode is <see cref="AlignerVocalMode.Estimated"/>, the
+        /// lyrics carry at least one line stamp, and the script accepts the flag.
+        /// </summary>
+        public static bool EstimatedVocalsApply(string lyricLabDir, string lyricsContent, AlignerVocalMode vocalMode)
+            => vocalMode == AlignerVocalMode.Estimated && HasAnyLineStamp(lyricsContent) && AlignerHasVocalModes(lyricLabDir);
+
         /// <summary>The first aligner version with evidence tiers (<c>--quality</c>).</summary>
         public const int QUALITY_TIERS_ALIGNER_VERSION = 6;
+
+        /// <summary>The first aligner version with <c>--vocal-mode</c> (backlog 354).</summary>
+        public const int VOCAL_MODE_ALIGNER_VERSION = 7;
+
+        /// <summary>
+        /// The first aligner version that WRITES the isolated vocals stem into its output dir as
+        /// <c>vocals.wav</c> (backlog 392). Read off the script's version like
+        /// <see cref="AlignerHasQualityTiers"/>: an older installed copy persists nothing, so the
+        /// importer finds no stem and packages the map without one, exactly as a map had before.
+        /// </summary>
+        public const int PERSISTS_VOCALS_STEM_ALIGNER_VERSION = 9;
+
+        /// <summary>
+        /// Whether the aligner script in <paramref name="lyricLabDir"/> writes the vocals stem into
+        /// its output dir on a run (see <see cref="PERSISTS_VOCALS_STEM_ALIGNER_VERSION"/>).
+        /// </summary>
+        public static bool AlignerPersistsVocalsStem(string lyricLabDir) => alignerVersionAtLeast(lyricLabDir, PERSISTS_VOCALS_STEM_ALIGNER_VERSION);
+
+        /// <summary>
+        /// Whether the aligner script in <paramref name="lyricLabDir"/> accepts <c>--vocal-mode</c>,
+        /// read off its version exactly as <see cref="AlignerHasQualityTiers"/> reads it.
+        /// </summary>
+        public static bool AlignerHasVocalModes(string lyricLabDir) => alignerVersionAtLeast(lyricLabDir, VOCAL_MODE_ALIGNER_VERSION);
+
+        private static bool alignerVersionAtLeast(string lyricLabDir, int minimum)
+            => int.TryParse(ReadAlignerVersion(lyricLabDir), NumberStyles.None, CultureInfo.InvariantCulture, out int version)
+               && version >= minimum;
+
+        /// <summary>
+        /// Said when estimated vocals are chosen but the installed aligner predates them. Worded, like
+        /// <see cref="HIGH_QUALITY_NEEDS_UPDATE"/>, to claim no stage in ImportProgressParser.
+        /// </summary>
+        public const string ESTIMATED_VOCALS_NEEDS_UPDATE = "estimated vocals need a newer install, update it in Settings > Experimental; "
+                                                            + "this import times the words from the audio";
+
+        /// <summary>Said when estimated vocals are chosen for lyrics with no line stamp to pace from.</summary>
+        public const string ESTIMATED_VOCALS_NEED_STAMPS = "estimated vocals need [mm:ss.xx] line stamps to pace from; "
+                                                           + "this import times the words from the audio";
+
+        /// <summary>Said when estimated vocals are on for a run.</summary>
+        public const string ESTIMATED_VOCALS_ON = "estimated vocals on, every line is paced evenly from its stamp";
+
+        /// <summary>
+        /// The progress line an aligner run asked for <paramref name="vocalMode"/> says up front: null
+        /// for <see cref="AlignerVocalMode.Aligned"/>, else whether estimated vocals are on or why this
+        /// run cannot honour them (no line stamp, checked first since an update would not help; an
+        /// install older than <see cref="VOCAL_MODE_ALIGNER_VERSION"/>).
+        /// </summary>
+        public static string? EstimatedVocalsNotice(string lyricLabDir, string lyricsContent, AlignerVocalMode vocalMode)
+        {
+            if (vocalMode != AlignerVocalMode.Estimated)
+                return null;
+
+            if (!HasAnyLineStamp(lyricsContent))
+                return ESTIMATED_VOCALS_NEED_STAMPS;
+
+            if (!AlignerHasVocalModes(lyricLabDir))
+            {
+                Logger.Log($"Estimated vocals are chosen but the aligner in {lyricLabDir} is version {ReadAlignerVersion(lyricLabDir) ?? "1"}, "
+                           + "which has no --vocal-mode; running its default", LoggingTarget.Runtime, LogLevel.Important);
+                return ESTIMATED_VOCALS_NEEDS_UPDATE;
+            }
+
+            return ESTIMATED_VOCALS_ON;
+        }
 
         /// <summary>
         /// Whether the aligner script in <paramref name="lyricLabDir"/> accepts <c>--quality</c>:
@@ -940,9 +1122,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
         /// <see cref="QUALITY_TIERS_ALIGNER_VERSION"/>. False for anything unreadable, so an
         /// unknown script gets the command line every version accepts.
         /// </summary>
-        public static bool AlignerHasQualityTiers(string lyricLabDir)
-            => int.TryParse(ReadAlignerVersion(lyricLabDir), NumberStyles.None, CultureInfo.InvariantCulture, out int version)
-               && version >= QUALITY_TIERS_ALIGNER_VERSION;
+        public static bool AlignerHasQualityTiers(string lyricLabDir) => alignerVersionAtLeast(lyricLabDir, QUALITY_TIERS_ALIGNER_VERSION);
 
         /// <summary>
         /// Said when the high-accuracy setting is on but the installed aligner predates it. Worded
@@ -952,10 +1132,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
         public const string HIGH_QUALITY_NEEDS_UPDATE = "high-accuracy mode needs a newer install, update it in Settings > Experimental; "
                                                         + "this import runs at the normal speed";
 
-        /// <summary>Runs the aligner subprocess and returns the produced timing.json text on success.</summary>
-        private static async Task<(LyricImportResult Result, string? TimingJson)> runAlignerAsync(
+        /// <summary>
+        /// Runs the aligner subprocess and returns the produced timing.json text on success, plus the
+        /// isolated vocals stem it wrote into its output dir (null when none was produced, which is
+        /// both a version-8-or-older script and a run that did not separate).
+        /// </summary>
+        private static async Task<(LyricImportResult Result, string? TimingJson, string? VocalsStemPath)> runAlignerAsync(
             string lyricLabDir, string audioPath, string lyricsPath, string artist, string title,
-            string lyricsContent, bool highQuality, Action<string> progress, CancellationToken token)
+            string lyricsContent, bool highQuality, AlignerVocalMode vocalMode, Action<string> progress, CancellationToken token)
         {
             string python = PythonExeFor(lyricLabDir);
             string outDir = Path.Combine(lyricLabDir, "out", "typebeat_import_" + SanitizeFolderName($"{artist} - {title}"));
@@ -976,8 +1160,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
             string venvBin = Path.GetDirectoryName(python)!;
             string existingPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
             psi.Environment["PATH"] = venvBin + Path.PathSeparator + existingPath;
+            RunPythonInUtf8(psi);
 
-            foreach (string arg in AlignerArguments(lyricLabDir, audioPath, lyricsPath, outDir, lyricsContent, highQuality))
+            foreach (string arg in AlignerArguments(lyricLabDir, audioPath, lyricsPath, outDir, lyricsContent, highQuality, vocalMode))
                 psi.ArgumentList.Add(arg);
 
             if (AlignerAnchorMode(lyricsContent) == "auto")
@@ -1001,23 +1186,46 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
                 }
             }
 
+            // The map set's estimated vocals choice (backlog 354), said up front because the result
+            // looks nothing like an aligned one. A choice the run cannot honour says why instead.
+            string? vocalModeNotice = EstimatedVocalsNotice(lyricLabDir, lyricsContent, vocalMode);
+
+            if (vocalModeNotice != null)
+                progress(vocalModeNotice);
+
             (int exitCode, string tail) = await RunProcessAsync(psi, progress, token).ConfigureAwait(false);
 
             if (exitCode == cancelled_exit_code)
-                return (LyricImportResult.Fail("import cancelled"), null);
+                return (LyricImportResult.Fail("import cancelled"), null, null);
 
             if (exitCode != 0)
-                return (AlignerFailure(lyricLabDir, exitCode, tail), null);
+                return (AlignerFailure(lyricLabDir, exitCode, tail), null, null);
 
             string? timingPath = Directory.Exists(outDir)
                 ? Directory.EnumerateFiles(outDir, "*.timing.json").OrderBy(f => f, StringComparer.OrdinalIgnoreCase).FirstOrDefault()
                 : null;
 
             if (timingPath == null)
-                return (LyricImportResult.Fail($"the aligner produced no timing.json in {outDir}"), null);
+                return (LyricImportResult.Fail($"the aligner produced no timing.json in {outDir}"), null, null);
 
             string timingJson = await File.ReadAllTextAsync(timingPath, token).ConfigureAwait(false);
-            return (LyricImportResult.Ok(string.Empty), timingJson);
+            return (LyricImportResult.Ok(string.Empty), timingJson, FindProducedVocalsStem(lyricLabDir, outDir));
+        }
+
+        /// <summary>
+        /// The vocals stem wav the aligner wrote into <paramref name="outDir"/>, or null: the file is
+        /// trusted only when the script's version is one that writes it (see
+        /// <see cref="AlignerPersistsVocalsStem"/>), so a leftover file from anything else is ignored.
+        /// Absent for a version-8-or-older script or a run that did not separate; that is a map with
+        /// no vocals waveform, not a failure.
+        /// </summary>
+        internal static string? FindProducedVocalsStem(string lyricLabDir, string outDir)
+        {
+            if (!AlignerPersistsVocalsStem(lyricLabDir))
+                return null;
+
+            string stemPath = Path.Combine(outDir, VocalsStem.WAV_FILENAME);
+            return File.Exists(stemPath) ? stemPath : null;
         }
 
         /// <summary>
@@ -1585,7 +1793,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
         /// <see cref="LyricImportResult.Notice"/>.
         /// </remarks>
         public static LyricImportResult PackageOsz(string oszPath, string artist, string title, string audioSourcePath, string timingJson, string lyricsContent,
-                                                   string? videoSourcePath = null, string? language = null, Action<string>? progress = null)
+                                                   string? videoSourcePath = null, string? language = null, Action<string>? progress = null,
+                                                   string? vocalsStemSourcePath = null)
         {
             try
             {
@@ -1643,6 +1852,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
 
                     using (var writer = new StreamWriter(archive.CreateEntry("lyrics.txt").Open()))
                         writer.Write(lyricsContent);
+
+                    // The isolated vocals stem (backlog 392), when this import produced one. Named
+                    // vocals.ogg/vocals.wav so the editor's waveform loader finds it without reading
+                    // the document; an import with no aligner (or an older one) simply has none.
+                    if (vocalsStemSourcePath != null && File.Exists(vocalsStemSourcePath))
+                    {
+                        string stemName = Path.GetExtension(vocalsStemSourcePath).Equals(".wav", StringComparison.OrdinalIgnoreCase)
+                            ? VocalsStem.WAV_FILENAME
+                            : VocalsStem.OGG_FILENAME;
+
+                        archive.CreateEntryFromFile(vocalsStemSourcePath, stemName);
+                    }
                 }
 
                 return LyricImportResult.Ok(oszPath) with { Notice = notice };
@@ -1654,6 +1875,74 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
             catch (Exception e)
             {
                 return LyricImportResult.Fail($"packaging the map failed: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Re-encodes the aligner's 16 kHz mono vocals stem wav to Ogg Vorbis (backlog 392), beside
+        /// the .osz, and returns the new path. Null when no ffmpeg is available or its Vorbis encoder
+        /// fails: the caller then keeps the wav, since a larger stem is a smaller problem than a
+        /// missing one. The stem is a view-only reading surface, so a failure here never fails an
+        /// import.
+        /// </summary>
+        private static async Task<string?> EncodedVocalsStemAsync(
+            string stemWavPath, string destinationDirectory, string? configuredLyricLabPath,
+            IEnumerable<string> startDirectories, CancellationToken token)
+        {
+            if (token.IsCancellationRequested)
+                return null;
+
+            string? ffmpeg = FfmpegAudioTrackExtractor.Resolve(configuredLyricLabPath, startDirectories);
+
+            if (ffmpeg == null)
+                return null;
+
+            string destination = Path.Combine(destinationDirectory, VocalsStem.OGG_FILENAME);
+
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = ffmpeg,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+
+                psi.ArgumentList.Add("-nostdin");
+                psi.ArgumentList.Add("-y");
+                psi.ArgumentList.Add("-v");
+                psi.ArgumentList.Add("error");
+                psi.ArgumentList.Add("-i");
+                psi.ArgumentList.Add(stemWavPath);
+                psi.ArgumentList.Add("-c:a");
+                psi.ArgumentList.Add("libvorbis");
+                psi.ArgumentList.Add("-q:a");
+                psi.ArgumentList.Add("5");
+                psi.ArgumentList.Add(destination);
+
+                (int exitCode, string _) = await RunProcessAsync(psi, _ => { }, token).ConfigureAwait(false);
+
+                if (exitCode == 0 && File.Exists(destination) && new FileInfo(destination).Length > 0)
+                    return destination;
+
+                try
+                {
+                    if (File.Exists(destination))
+                        File.Delete(destination);
+                }
+                catch
+                {
+                    // best effort
+                }
+
+                return null;
+            }
+            catch
+            {
+                // A missing or unrunnable binary, or any other failure, degrades to the wav.
+                return null;
             }
         }
 

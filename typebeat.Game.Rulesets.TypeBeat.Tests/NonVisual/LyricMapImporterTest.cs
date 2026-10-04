@@ -13,6 +13,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
+using typebeat.Game.Beatmaps;
 using typebeat.Game.Beatmaps.Formats;
 using typebeat.Game.IO;
 using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
@@ -21,6 +22,7 @@ using typebeat.Game.Rulesets.TypeBeat.Configuration;
 using typebeat.Game.Rulesets.TypeBeat.Import;
 using typebeat.Game.Rulesets.TypeBeat.Objects;
 using typebeat.Game.Screens.ImportLyrics;
+using AlignerVocalMode = typebeat.Game.Beatmaps.AlignerVocalMode;
 
 namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
 {
@@ -87,6 +89,41 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(LyricMapImporter.AlignerAnchorMode("[ar:Artist]\n[Lyrics]\nhello\n"), Is.EqualTo("auto"));
             Assert.That(LyricMapImporter.AlignerAnchorMode("hello\nworld\n[00:30.00]\n"), Is.EqualTo("auto"));
             Assert.That(LyricMapImporter.HasAnyLineStamp(""), Is.False);
+        }
+
+        /// <summary>
+        /// Backlog 381: with the "use local auto-aligner" switch hidden, an installed aligner always
+        /// runs. A stored False left by an older install (the player who once switched it off) is
+        /// IGNORED, not migrated: the import path opens the gate anyway, and the stored value is left
+        /// exactly as it was so a surfaced switch would honour it again. Both arms pinned, plus the
+        /// shipped default, so flipping the flag back cannot silently strand anyone either.
+        /// </summary>
+        [Test]
+        public void HiddenLocalAlignerSwitchIgnoresAStoredFalseWithoutRewritingIt()
+        {
+            using (var config = new TypeBeatRulesetConfigManager(null, new TypeBeatRuleset().RulesetInfo))
+            {
+                Assert.That(config.Get<bool>(TypeBeatRulesetSetting.LocalAlignerEnabled), Is.True, "the dormant setting defaults on");
+                Assert.That(LyricMapImportService.LocalAlignerEnabled(config), Is.True);
+
+                // An old install's stored opt-out.
+                config.SetValue(TypeBeatRulesetSetting.LocalAlignerEnabled, false);
+
+                Assert.That(LyricMapImportService.LocalAlignerEnabled(config), Is.True,
+                    "a hidden switch must not keep an installed aligner from running");
+                Assert.That(config.Get<bool>(TypeBeatRulesetSetting.LocalAlignerEnabled), Is.False,
+                    "the stored choice is kept for a returning hosted aligner, never rewritten");
+
+                // Surfaced again, the same stored row is honoured as it was left.
+                Assert.That(LyricMapImportService.LocalAlignerEnabled(config, toggleSurfaced: true), Is.False);
+
+                config.SetValue(TypeBeatRulesetSetting.LocalAlignerEnabled, true);
+                Assert.That(LyricMapImportService.LocalAlignerEnabled(config, toggleSurfaced: true), Is.True);
+            }
+
+            // No config to read (the service before the cache resolves) reads as on in both arms.
+            Assert.That(LyricMapImportService.LocalAlignerEnabled(null), Is.True);
+            Assert.That(LyricMapImportService.LocalAlignerEnabled(null, toggleSurfaced: true), Is.True);
         }
 
         /// <summary>
@@ -161,6 +198,115 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
 
             // The notice for the old-script case must not claim a stage of the import display.
             Assert.That(ImportProgressParser.Parse(LyricMapImporter.HIGH_QUALITY_NEEDS_UPDATE).Stage, Is.Null);
+        }
+
+        /// <summary>
+        /// Backlog 354: a set's estimated vocals reach the aligner as <c>--vocal-mode estimated</c>, and
+        /// ONLY when it can honour them: the mode is chosen, the lyrics carry a line stamp to pace from,
+        /// and the script is version 7 or newer (version 6, what every player has installed until the
+        /// update, exits 2 on the unknown option and would cost the import its word timing). Aligned,
+        /// every set's default, adds nothing, so the ordinary command line is unchanged.
+        /// </summary>
+        [TestCase("ALIGNER_VERSION = \"7\"\n", "[00:01.00] hello\n[00:02.00] world\n", AlignerVocalMode.Estimated, true)]
+        [TestCase("ALIGNER_VERSION = \"12\"\n", "[00:01.00] hello\nworld\n", AlignerVocalMode.Estimated, true)]
+        [TestCase("ALIGNER_VERSION = \"7\"\n", "[00:01.00] hello\n[00:02.00] world\n", AlignerVocalMode.Aligned, false)]
+        [TestCase("ALIGNER_VERSION = \"6\"\n", "[00:01.00] hello\n[00:02.00] world\n", AlignerVocalMode.Estimated, false)]
+        [TestCase("ALIGNER_VERSION = \"7\"\n", "hello\nworld\n", AlignerVocalMode.Estimated, false)]
+        [TestCase("# a version-1 script, no constant\n", "[00:01.00] hello\n", AlignerVocalMode.Estimated, false)]
+        public void EstimatedVocalsReachTheAlignerOnlyWhenItCanHonourThem(string script, string lyrics, AlignerVocalMode mode, bool expectFlag)
+        {
+            string lab = makeLab();
+            File.WriteAllText(Path.Combine(lab, "align_lyrics.py"), script);
+
+            Assert.That(LyricMapImporter.EstimatedVocalsApply(lab, lyrics, mode), Is.EqualTo(expectFlag));
+
+            var args = LyricMapImporter.AlignerArguments(lab, "a.mp3", "l.txt", "out", lyrics, false, mode);
+            string anchors = LyricMapImporter.AlignerAnchorMode(lyrics);
+
+            if (expectFlag)
+                Assert.That(args, Is.EqualTo(new[] { "align_lyrics.py", "a.mp3", "l.txt", "-o", "out", "--anchors", anchors, "--vocal-mode", "estimated" }));
+            else
+                Assert.That(args, Is.EqualTo(new[] { "align_lyrics.py", "a.mp3", "l.txt", "-o", "out", "--anchors", anchors }));
+        }
+
+        /// <summary>
+        /// The vocal mode rides alongside high accuracy rather than replacing it, and the default
+        /// parameter is Aligned, so every caller that predates the mode builds the line it always did.
+        /// </summary>
+        [Test]
+        public void EstimatedVocalsRideAlongsideHighAccuracy()
+        {
+            string lab = makeLab();
+            File.WriteAllText(Path.Combine(lab, "align_lyrics.py"), "ALIGNER_VERSION = \"7\"\n");
+            const string stamped = "[00:01.00] hello\n[00:02.00] world\n";
+
+            Assert.That(LyricMapImporter.AlignerArguments(lab, "a.mp3", "l.txt", "out", stamped, true, AlignerVocalMode.Estimated), Is.EqualTo(new[]
+            {
+                "align_lyrics.py", "a.mp3", "l.txt", "-o", "out", "--anchors", "ref", "--quality", "full", "--vocal-mode", "estimated",
+            }));
+
+            Assert.That(LyricMapImporter.AlignerArguments(lab, "a.mp3", "l.txt", "out", stamped, true),
+                Is.EqualTo(LyricMapImporter.AlignerArguments(lab, "a.mp3", "l.txt", "out", stamped, true, AlignerVocalMode.Aligned)));
+        }
+
+        /// <summary>
+        /// What a run asked for estimated vocals says up front: on, or why not (no stamp is named
+        /// before an old install, since updating would not help it). None of the lines may claim a
+        /// stage of the import display, and Aligned says nothing at all.
+        /// </summary>
+        [Test]
+        public void EstimatedVocalsNoticeSaysWhyAndClaimsNoStage()
+        {
+            string lab = makeLab();
+            const string stamped = "[00:01.00] hello\n";
+            const string bare = "hello\n";
+
+            File.WriteAllText(Path.Combine(lab, "align_lyrics.py"), "ALIGNER_VERSION = \"7\"\n");
+            string? aligned = LyricMapImporter.EstimatedVocalsNotice(lab, stamped, AlignerVocalMode.Aligned);
+            string? on = LyricMapImporter.EstimatedVocalsNotice(lab, stamped, AlignerVocalMode.Estimated);
+
+            File.WriteAllText(Path.Combine(lab, "align_lyrics.py"), "ALIGNER_VERSION = \"6\"\n");
+            string? old = LyricMapImporter.EstimatedVocalsNotice(lab, stamped, AlignerVocalMode.Estimated);
+            string? oldBare = LyricMapImporter.EstimatedVocalsNotice(lab, bare, AlignerVocalMode.Estimated);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(aligned, Is.Null);
+                Assert.That(on, Is.EqualTo(LyricMapImporter.ESTIMATED_VOCALS_ON));
+                Assert.That(old, Is.EqualTo(LyricMapImporter.ESTIMATED_VOCALS_NEEDS_UPDATE));
+                Assert.That(oldBare, Is.EqualTo(LyricMapImporter.ESTIMATED_VOCALS_NEED_STAMPS));
+
+                foreach (string notice in new[]
+                         {
+                             LyricMapImporter.ESTIMATED_VOCALS_ON, LyricMapImporter.ESTIMATED_VOCALS_NEEDS_UPDATE, LyricMapImporter.ESTIMATED_VOCALS_NEED_STAMPS,
+                         })
+                    Assert.That(ImportProgressParser.Parse(notice).Stage, Is.Null, notice);
+
+                // The aligner's own line for the mode (align_lyrics.py, version 7) holds the display too.
+                Assert.That(ImportProgressParser.Parse("[17:57:27] estimated vocals: every line paced evenly from its stamp; stamp lead 80 ms, 70 ms a letter").Stage,
+                    Is.Null);
+            });
+        }
+
+        /// <summary>
+        /// The game ships the aligner it gates on: the vendored script must be new enough to accept
+        /// <c>--vocal-mode</c>, or a fresh install would never honour a mapper's choice. Read off the
+        /// repo's own <c>lyriclab/</c> (the closest one above the test directory), never through
+        /// ResolveLyricLabDir, which prefers whatever set-up checkout sits nearby.
+        /// </summary>
+        [Test]
+        public void ShippedAlignerAcceptsVocalModes()
+        {
+            string? vendored = null;
+
+            for (var dir = new DirectoryInfo(TestContext.CurrentContext.TestDirectory); dir != null && vendored == null; dir = dir.Parent)
+            {
+                if (File.Exists(Path.Combine(dir.FullName, "lyriclab", "align_lyrics.py")))
+                    vendored = Path.Combine(dir.FullName, "lyriclab");
+            }
+
+            Assert.That(vendored, Is.Not.Null, "the vendored lyriclab/ should sit above the test directory");
+            Assert.That(LyricMapImporter.AlignerHasVocalModes(vendored!), Is.True, $"vendored aligner version {LyricMapImporter.ReadAlignerVersion(vendored)}");
         }
 
         /// <summary>
@@ -962,6 +1108,133 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(result.Error, Does.Not.Contain("103"));
         }
 
+        #region The vocals stem (backlog 392)
+
+        /// <summary>
+        /// A lyriclab stub whose script declares version 9 (the first that writes the vocals stem).
+        /// </summary>
+        private string makeVocalsLab()
+        {
+            string lab = Path.Combine(tempRoot, "lyriclab");
+            Directory.CreateDirectory(lab);
+            File.WriteAllText(Path.Combine(lab, "align_lyrics.py"), $"ALIGNER_VERSION = \"{LyricMapImporter.PERSISTS_VOCALS_STEM_ALIGNER_VERSION}\"\n");
+            return lab;
+        }
+
+        [Test]
+        public void ProducedVocalsStemIsFoundOnlyForAnAlignerThatWritesIt()
+        {
+            string lab = makeVocalsLab();
+            string outDir = Path.Combine(tempRoot, "out");
+            Directory.CreateDirectory(outDir);
+            string stem = Path.Combine(outDir, VocalsStem.WAV_FILENAME);
+            File.WriteAllBytes(stem, new byte[] { 1, 2, 3 });
+
+            // The stem the aligner wrote is trusted for a version-9 script...
+            Assert.That(LyricMapImporter.FindProducedVocalsStem(lab, outDir), Is.EqualTo(stem));
+
+            // ...and ignored for an older one that could not have written it, so a stale file in a
+            // reused out dir never becomes a map's vocals waveform.
+            File.WriteAllText(Path.Combine(lab, "align_lyrics.py"), "ALIGNER_VERSION = \"8\"\n");
+            Assert.That(LyricMapImporter.FindProducedVocalsStem(lab, outDir), Is.Null);
+
+            // A version-9 script with no stem file (a --no-separate run) is likewise no stem.
+            File.WriteAllText(Path.Combine(lab, "align_lyrics.py"), $"ALIGNER_VERSION = \"{LyricMapImporter.PERSISTS_VOCALS_STEM_ALIGNER_VERSION}\"\n");
+            File.Delete(stem);
+            Assert.That(LyricMapImporter.FindProducedVocalsStem(lab, outDir), Is.Null);
+        }
+
+        [Test]
+        public void PackageOszCarriesTheVocalsStemUnderItsFixedName()
+        {
+            string audioPath = Path.Combine(tempRoot, "audio.mp3");
+            File.WriteAllText(audioPath, "fake audio");
+            string timing = "{\"version\":2,\"song_end_ms\":8000,\"lines\":[{\"text\":\"one two\",\"start_ms\":1000,\"end_ms\":3000}]}";
+
+            string stemWav = Path.Combine(tempRoot, VocalsStem.WAV_FILENAME);
+            File.WriteAllBytes(stemWav, new byte[] { 0x52, 0x49, 0x46, 0x46 });
+
+            string oszPath = Path.Combine(tempRoot, "withstem.osz");
+            var result = LyricMapImporter.PackageOsz(oszPath, "A", "B", audioPath, timing, "one two", vocalsStemSourcePath: stemWav);
+
+            Assert.That(result.Success, Is.True, result.Error);
+
+            using (var archive = ZipFile.OpenRead(oszPath))
+            {
+                Assert.That(archive.GetEntry(VocalsStem.WAV_FILENAME), Is.Not.Null, "the stem must travel as vocals.wav so the editor finds it");
+                Assert.That(archive.GetEntry(VocalsStem.OGG_FILENAME), Is.Null);
+            }
+
+            // An Ogg-sourced stem lands under the Ogg name (the encoder's choice upstream).
+            string stemOgg = Path.Combine(tempRoot, "some_encoded.ogg");
+            File.WriteAllBytes(stemOgg, new byte[] { 0x4f, 0x67, 0x67, 0x53 });
+            string oszOgg = Path.Combine(tempRoot, "oggstem.osz");
+            var oggResult = LyricMapImporter.PackageOsz(oszOgg, "A", "B", audioPath, timing, "one two", vocalsStemSourcePath: stemOgg);
+
+            Assert.That(oggResult.Success, Is.True, oggResult.Error);
+
+            using (var archive = ZipFile.OpenRead(oszOgg))
+                Assert.That(archive.GetEntry(VocalsStem.OGG_FILENAME), Is.Not.Null, "an encoded stem rides as vocals.ogg");
+        }
+
+        [Test]
+        public void PackageOszWithoutAStemStillSucceedsAndCarriesNone()
+        {
+            string audioPath = Path.Combine(tempRoot, "audio.mp3");
+            File.WriteAllText(audioPath, "fake audio");
+            string timing = "{\"version\":2,\"song_end_ms\":8000,\"lines\":[{\"text\":\"one two\",\"start_ms\":1000,\"end_ms\":3000}]}";
+
+            string oszPath = Path.Combine(tempRoot, "nostem.osz");
+            var result = LyricMapImporter.PackageOsz(oszPath, "A", "B", audioPath, timing, "one two");
+
+            Assert.That(result.Success, Is.True, result.Error);
+
+            using var archive = ZipFile.OpenRead(oszPath);
+            Assert.That(archive.GetEntry(VocalsStem.WAV_FILENAME), Is.Null);
+            Assert.That(archive.GetEntry(VocalsStem.OGG_FILENAME), Is.Null);
+        }
+
+        [Test]
+        public void VocalsStemFilenameInAcceptsEitherExtension()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(VocalsStem.IsStemFileName(VocalsStem.OGG_FILENAME), Is.True);
+                Assert.That(VocalsStem.IsStemFileName(VocalsStem.WAV_FILENAME), Is.True);
+                Assert.That(VocalsStem.IsStemFileName("VOCALS.OGG"), Is.True, "case-insensitive, matching the realm lookup");
+                Assert.That(VocalsStem.IsStemFileName("audio.mp3"), Is.False);
+                Assert.That(VocalsStem.IsStemFileName(null), Is.False);
+            });
+        }
+
+        [Test]
+        public void ShippedAlignerPersistsTheVocalsStem()
+        {
+            // The vendored script must actually copy the stem into its output dir (backlog 392), and
+            // only when it separated. Found the way ShippedAlignerAcceptsVocalModes finds it.
+            string? vendored = null;
+
+            for (var dir = new DirectoryInfo(TestContext.CurrentContext.TestDirectory); dir != null && vendored == null; dir = dir.Parent)
+            {
+                if (File.Exists(Path.Combine(dir.FullName, "lyriclab", "align_lyrics.py")))
+                    vendored = Path.Combine(dir.FullName, "lyriclab", "align_lyrics.py");
+            }
+
+            Assert.That(vendored, Is.Not.Null);
+
+            string script = File.ReadAllText(vendored!);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(script, Does.Contain("def persist_vocals_stem"));
+                Assert.That(script, Does.Contain("persist_vocals_stem(out_dir, stem, wav16)"));
+                Assert.That(script, Does.Contain("if not args.no_separate:"), "a --no-separate run aligned on the mix and has no stem to keep");
+                Assert.That(LyricMapImporter.AlignerPersistsVocalsStem(Path.GetDirectoryName(vendored!)!), Is.True);
+            });
+        }
+
+        #endregion
+
         #region Setup sentinel and repair (backlog 353)
 
         private string makeLab()
@@ -1391,6 +1664,79 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         {
             using var reader = new StreamReader(entry.Open());
             return reader.ReadToEnd();
+        }
+
+        /// <summary>
+        /// A user log (2026-10-02): demucs died with UnicodeEncodeError printing a Japanese track path
+        /// through a cp1252 stdout, and the import called the aligner unavailable. Every python we
+        /// start now runs in UTF-8, children included, and the log reader decodes it as such.
+        /// </summary>
+        [Test]
+        public void PythonProcessesRunInUtf8()
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+
+            LyricMapImporter.RunPythonInUtf8(psi);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(psi.Environment["PYTHONUTF8"], Is.EqualTo("1"), "covers the demucs child python spawns");
+                Assert.That(psi.Environment["PYTHONIOENCODING"], Is.EqualTo("utf-8"));
+                Assert.That(psi.StandardOutputEncoding, Is.EqualTo(Encoding.UTF8));
+                Assert.That(psi.StandardErrorEncoding, Is.EqualTo(Encoding.UTF8));
+            });
+        }
+
+        [Test]
+        public void ShippedAlignerRunsDemucsInUtf8Too()
+        {
+            // Belt and braces: the vendored script sets the same variables on the demucs subprocess,
+            // so a direct invocation outside the game behaves the same way. Found the way
+            // ShippedAlignerAcceptsVocalModes finds it: the repo's own lyriclab/ above the test dir.
+            string? vendored = null;
+
+            for (var dir = new DirectoryInfo(TestContext.CurrentContext.TestDirectory); dir != null && vendored == null; dir = dir.Parent)
+            {
+                if (File.Exists(Path.Combine(dir.FullName, "lyriclab", "align_lyrics.py")))
+                    vendored = Path.Combine(dir.FullName, "lyriclab", "align_lyrics.py");
+            }
+
+            Assert.That(vendored, Is.Not.Null);
+
+            string script = File.ReadAllText(vendored!);
+            int at = script.IndexOf("def separate_vocals", StringComparison.Ordinal);
+            string body = script.Substring(at, script.IndexOf("\ndef ", at + 10, StringComparison.Ordinal) - at);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(body, Does.Contain("env[\"PYTHONUTF8\"] = \"1\""));
+                Assert.That(body, Does.Contain("env[\"PYTHONIOENCODING\"] = \"utf-8\""));
+                Assert.That(script, Does.Contain($"ALIGNER_VERSION = \"{LyricMapImporter.PERSISTS_VOCALS_STEM_ALIGNER_VERSION}\""),
+                    "installed older copies must be offered the update, and the stem needs version 9");
+            });
+        }
+
+        [Test]
+        public void NoFallbackFailureNamesTheSituationThatApplies()
+        {
+            const string tail = "  File \"align_lyrics.py\", line 4049, in main |     align_src = separate_vocals(song_wav, work, | subprocess.CalledProcessError: Command '[...]' returned non-zero exit status 1.";
+
+            string notInstalled = LyricMapImporter.NoFallbackFailureMessage(false, false, null);
+            string broken = LyricMapImporter.NoFallbackFailureMessage(false, true, null);
+            string failed = LyricMapImporter.NoFallbackFailureMessage(false, false, tail);
+            string failedPartial = LyricMapImporter.NoFallbackFailureMessage(true, false, tail);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(notInstalled, Does.StartWith("no auto-aligner is available").And.Contain("Install the local auto-aligner"));
+                Assert.That(broken, Does.Contain("install is incomplete").And.Contain("Repair local auto-aligner"));
+                Assert.That(failed, Does.StartWith("the local auto-aligner is installed but its run failed"));
+                Assert.That(failed, Does.Contain("subprocess.CalledProcessError"), "the last line of the tail is the one that stopped it");
+                Assert.That(failed, Does.Not.Contain("line 4049"), "not the whole tail");
+                Assert.That(failed, Does.Not.Contain("Install the local auto-aligner"), "it is installed; do not tell them to install it");
+                Assert.That(failedPartial, Does.Contain("only some lines have [mm:ss.xx] timestamps"));
+                Assert.That(LyricMapImporter.ShortAlignerFailure(new string('x', 400)), Has.Length.EqualTo(160));
+            });
         }
 
         private static typebeat.Game.Beatmaps.Beatmap decode(string osuText)

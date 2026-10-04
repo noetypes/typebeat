@@ -33,7 +33,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                 Editor.Mods.Value = doubleTime ? new Mod[] { new TypeBeatModDoubleTime() } : Array.Empty<Mod>();
                 EditorClock.Stop();
                 EditorClock.Seek(1500);
-                Editor.ChildrenOfType<PlaybackControl.PlaybackTabControl>().Single().Current.Value = editorRate;
+                Editor.ChildrenOfType<PlaybackControl>().Single().Tempo.Value = editorRate;
             });
             AddAssert("editor state captures its selected speed", () => Editor.GetState().PlaybackRate == editorRate);
             AddAssert("editor audio uses that tempo", () => Math.Abs(EditorClock.AudioAdjustments.AggregateTempo.Value - editorRate) < 1e-6);
@@ -53,7 +53,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                     new KeyBindingPressEvent<GlobalAction>(new InputState(), GlobalAction.EditorTestPlayQuickExitToInitialTime)));
             AddUntilStep("editor resumed with its speed", () => editorPlayer() == null
                 && EditorClock.PlaybackRate.Value == editorRate
-                && Editor.ChildrenOfType<PlaybackControl.PlaybackTabControl>().Single().Current.Value == editorRate);
+                && Editor.ChildrenOfType<PlaybackControl>().Single().Tempo.Value == editorRate);
             AddStep("clear gameplay mods", () => Editor.Mods.Value = Array.Empty<Mod>());
         }
     }

@@ -157,6 +157,14 @@ namespace typebeat.Game
 
         protected OsuConfigManager LocalConfig { get; private set; }
 
+        /// <summary>
+        /// The keycap layout the OS's keyboard map describes (<see cref="OsKeyboardLayout"/>, backlog
+        /// 383; it was the "Keyboard layout" setting before), bound to the root input manager's rewrite
+        /// in <see cref="CreateUserInputManager"/> (which can run before load, so this field is the
+        /// go-between) and to the detection once it runs.
+        /// </summary>
+        private readonly Bindable<KeyboardLayout> keyboardLayout = new Bindable<KeyboardLayout>();
+
         protected SessionStatics SessionStatics { get; private set; }
 
         protected OsuColour Colours { get; private set; }
@@ -291,6 +299,17 @@ namespace typebeat.Game
             Resources.AddStore(new NamespacedResourceStore<byte[]>(new DllResourceStore(typeof(OsuGameBase).Assembly), @"Resources"));
 
             dependencies.Cache(realm = new RealmAccess(Storage, CLIENT_DATABASE_FILENAME, Host.UpdateThread));
+
+            // The keycap layout every shortcut follows, read off the OS's own keyboard map through the
+            // HOST's provider (the one that asks the OS layout what a physical key carries), and read
+            // again whenever the OS layout changes (backlog 383; it was a setting before).
+            var osKeyboardLayout = new OsKeyboardLayout(keyCombinationProvider, action => Schedule(action));
+            keyboardLayout.BindTo(osKeyboardLayout.Current);
+            dependencies.Cache(osKeyboardLayout);
+
+            // Key combinations are DISPLAYED by keycap too, matching what they now answer to.
+            keyCombinationProvider = new KeycapKeyCombinationProvider(keyCombinationProvider, keyboardLayout);
+            dependencies.CacheAs<ReadableKeyCombinationProvider>(keyCombinationProvider);
 
             dependencies.CacheAs<RulesetStore>(RulesetStore = new RealmRulesetStore(realm, Storage));
             dependencies.CacheAs<IRulesetStore>(RulesetStore);
@@ -655,7 +674,12 @@ namespace typebeat.Game
 
         protected virtual IBeatmapUpdater CreateBeatmapUpdater() => new BeatmapUpdater(BeatmapManager, difficultyCache, API, Storage);
 
-        protected override UserInputManager CreateUserInputManager() => new OsuUserInputManager();
+        protected override UserInputManager CreateUserInputManager()
+        {
+            var inputManager = new OsuUserInputManager();
+            inputManager.KeyboardLayout.BindTo(keyboardLayout);
+            return inputManager;
+        }
 
         protected virtual BatteryInfo CreateBatteryInfo() => null;
 

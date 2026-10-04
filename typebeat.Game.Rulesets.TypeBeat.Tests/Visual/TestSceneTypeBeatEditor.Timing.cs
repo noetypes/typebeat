@@ -10,12 +10,38 @@ using osuTK.Input;
 using typebeat.Game.Graphics.UserInterfaceV2;
 using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
 using typebeat.Game.Rulesets.TypeBeat.Edit;
+using typebeat.Game.Rulesets.TypeBeat.Objects;
 using typebeat.Game.Screens.Edit.Timing;
 
 namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
 {
     public partial class TestSceneTypeBeatEditor
     {
+        [Test]
+        public void TestLineBoundaryBandRefreshesAfterAddingAndRemovingALine()
+        {
+            LineBoundariesBand band = null!;
+            TypeBeatHitObject added = null!;
+            int expectedCount = 0;
+            AddUntilStep("line boundary band loaded", () =>
+            {
+                band = Editor.ChildrenOfType<LineBoundariesBand>().SingleOrDefault()!;
+                return band?.IsLoaded == true && band.DrawnElementCount > 0;
+            });
+            AddStep("add a line", () =>
+            {
+                added = TypeBeatEditorOperations.AddLine(EditorBeatmap, 9000, "new line")!;
+                expectedCount = EditorBeatmap.HitObjects.OfType<TypeBeatHitObject>().Sum(line => 2 + line.Line.Units.Count);
+            });
+            AddUntilStep("new line shades and ticks are drawn", () => band.DrawnElementCount == expectedCount);
+            AddStep("remove the added line", () =>
+            {
+                TypeBeatEditorOperations.DeleteLine(EditorBeatmap, added);
+                expectedCount = EditorBeatmap.HitObjects.OfType<TypeBeatHitObject>().Sum(line => 2 + line.Line.Units.Count);
+            });
+            AddUntilStep("removed line disappears from the band", () => band.DrawnElementCount == expectedCount);
+        }
+
         [Test]
         public void TestMovingSubdivisionsBetweenWordsRebuildsAllHandles()
         {

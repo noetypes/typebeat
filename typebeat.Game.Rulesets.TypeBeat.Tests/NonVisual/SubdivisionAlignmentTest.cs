@@ -159,6 +159,81 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(cell.TargetTime, Is.EqualTo(oldTarget));
         }
 
+        [TestCase(185100.0, 5)]
+        [TestCase(186100.0, 8)]
+        [TestCase(189000.0, 16)]
+        public void RushCapPlayheadFollowsTheTargetEra(double time, int alignedCount)
+        {
+            // Built legacy and flipped, the path a replay header takes: the playhead the rush cap
+            // measures against must track the targets the cells actually carry after the swap.
+            var e = engine(OverdoneLine(), false);
+            int legacyCount = countableAtOrBefore(e, time);
+            Assert.That(e.PlayheadCountablePosition(time), Is.EqualTo(legacyCount), "legacy era");
+
+            e.AlignSubdivisionTargets = true;
+            Assert.That(countableAtOrBefore(e, time), Is.EqualTo(alignedCount), "aligned targets cross-check");
+            Assert.That(e.PlayheadCountablePosition(time), Is.EqualTo(alignedCount), "aligned era");
+            Assert.That(legacyCount, Is.Not.EqualTo(alignedCount), "the fixture separates the two eras");
+
+            e.AlignSubdivisionTargets = false;
+            Assert.That(e.PlayheadCountablePosition(time), Is.EqualTo(legacyCount), "back to legacy");
+
+            Assert.That(engine(OverdoneLine(), true).PlayheadCountablePosition(time), Is.EqualTo(alignedCount), "built aligned");
+        }
+
+        [Test]
+        public void TheTargetEraRaisesItsChangeEventOnARealChangeOnly()
+        {
+            // The lyric stage re-lays its pace bands on this event, the same shape as the grouping
+            // switch (AuthoredSyllablesEraTest), because the bands are laid from the cells' targets.
+            var e = engine(OverdoneLine(), true);
+            int flips = 0;
+            e.AlignSubdivisionTargetsChanged += () => flips++;
+            var alignedBands = UnderlinePace.BuildRelativeBands(e.Lines);
+
+            ReplayEngineFeed.Apply(e, TypeBeatReplayFrame.CreateConfigFrame(0, true));
+            Assert.That(e.AlignSubdivisionTargets, Is.False, "a CONFIG frame alone is a replay recorded before the era");
+            Assert.That(UnderlinePace.BuildRelativeBands(e.Lines), Is.Not.EqualTo(alignedBands), "the bands follow the target era");
+
+            ReplayEngineFeed.Apply(e, TypeBeatReplayFrame.CreateExtendedConfigFrame(0, alignSubdivisionTargets: true));
+            Assert.That(e.AlignSubdivisionTargets, Is.True);
+            Assert.That(UnderlinePace.BuildRelativeBands(e.Lines), Is.EqualTo(alignedBands));
+
+            ReplayEngineFeed.Apply(e, TypeBeatReplayFrame.CreateExtendedConfigFrame(0, alignSubdivisionTargets: true));
+            Assert.That(flips, Is.EqualTo(2), "the change event fires on a real change only");
+
+            ReplayEngineFeed.ClearExtendedEras(e);
+            Assert.That(e.AlignSubdivisionTargets, Is.False);
+            Assert.That(flips, Is.EqualTo(3));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ThePublicFactoryBuildsTheLineTheLiveEngineHolds(bool literate)
+        {
+            var source = OverdoneLine();
+            var live = engine(source, true, literate).Lines[0];
+            var legacy = engine(source, false, literate).Lines[0];
+
+            foreach (var built in new[]
+                     {
+                         TypingLine.FromLyricLine(source, literate, alignSubdivisionTargets: true),
+                         TypingLine.ForMods(source, literate, false, null, alignSubdivisionTargets: true),
+                     })
+            {
+                Assert.That(built.Cells.Select(c => c.TargetTime), Is.EqualTo(live.Cells.Select(c => c.TargetTime)));
+                Assert.That(built.SealGraceMs, Is.EqualTo(live.SealGraceMs));
+            }
+
+            var plain = TypingLine.FromLyricLine(source, literate);
+            Assert.That(plain.Cells.Select(c => c.TargetTime), Is.EqualTo(legacy.Cells.Select(c => c.TargetTime)), "the default is still the legacy era");
+            Assert.That(plain.SealGraceMs, Is.EqualTo(legacy.SealGraceMs));
+            Assert.That(plain.Cells.Select(c => c.TargetTime), Is.Not.EqualTo(live.Cells.Select(c => c.TargetTime)), "the fixture separates the two eras");
+        }
+
+        private static int countableAtOrBefore(TypingEngine e, double time)
+            => e.Lines.SelectMany(l => l.Cells).Count(c => c.IsCountable && c.TargetTime <= time);
+
         [TestCase(false, false)]
         [TestCase(false, true)]
         [TestCase(true, false)]

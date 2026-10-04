@@ -967,7 +967,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// <see cref="Typeability.Fold"/>), so a right letter typed in the wrong case is judged
         /// wrong: rejected/miss, exactly like any other wrong char. Off by default: gameplay is
         /// case-insensitive. Requires the input path to actually produce upper-case chars for
-        /// Shift-held keys (see <see cref="KeyCharMap"/>), else capitals would be untypeable.
+        /// Shift-held keys (the OS layout commits them since backlog 383, and <see cref="TextInputFold"/>
+        /// keeps their case), else capitals would be untypeable.
         /// Set from <see cref="Literate"/> at construction; still settable so a test can exercise
         /// exact-case matching on its own.
         /// </summary>
@@ -979,7 +980,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// flag this is fixed at construction, because it changes the CELL LIST itself (see
         /// <see cref="TypingLine.FromLyricLine"/>) rather than only how a press is judged, and the
         /// nested per-cell scoring objects have to be flattened the same way.
-        /// Requires the input path to be able to produce the marks (see <see cref="KeyCharMap"/>).
+        /// Requires the input path to be able to produce the marks (<see cref="TextInputFold"/> passes them under the mod).
         /// </summary>
         public bool Literate { get; }
 
@@ -987,9 +988,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// Polyglot mod (backlog 331): the lines are played in their ORIGINAL script (see
         /// <see cref="PolyglotLine"/>), fixed at construction for the reason <see cref="Literate"/>
         /// is, and a press is matched against a cell in Unicode NFC (see
-        /// <see cref="PolyglotText.Matches"/>). The input path is the OS's committed TEXT rather than
-        /// <see cref="KeyCharMap"/>, which only the playfield has to know. A MOD and not an era: a
-        /// score carries it in its mod list, and no stored run can carry a mod that did not exist.
+        /// <see cref="PolyglotText.Matches"/>). The input path is the OS's committed TEXT, kept in its
+        /// own script rather than folded by <see cref="TextInputFold"/>, which only the playfield has to
+        /// know. A MOD and not an era: a score carries it in its mod list, and no stored run can
+        /// carry a mod that did not exist.
         /// </summary>
         public bool Polyglot { get; }
 
@@ -1303,8 +1305,22 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 alignSubdivisionTargets = value;
                 foreach (var line in lines)
                     line.SetAlignedSubdivisionTargets(value);
+
+                // The rush cap's playhead reads the cells' TargetTimes through a cached, sorted copy;
+                // a swap of the targets that left it on the old era would measure the cap (and
+                // RushCapCostsAccuracy's Meh) against targets this run is not judged on.
+                rebuildCountableTargets();
+                AlignSubdivisionTargetsChanged?.Invoke();
             }
         }
+
+        /// <summary>
+        /// Raised whenever <see cref="AlignSubdivisionTargets"/> actually changes value, which outside
+        /// construction is only a replay's header frames re-selecting the target era (the watch path
+        /// attaching or detaching a stored run). Read by the lyric stack to re-lay the pace bands it
+        /// drew from the other era's targets, exactly as <see cref="AuthoredSyllablesOnlyChanged"/>.
+        /// </summary>
+        public event Action? AlignSubdivisionTargetsChanged;
 
         /// <summary>
         /// THE RUSH CAP COSTS ACCURACY, NOT COMBO (backlog 347). With this set, a press that leaves
@@ -1756,8 +1772,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         // cells (typeable and not a space), which is the currency the rush cap measures in.
         // countableTargets: every countable cell's target time, sorted ascending, so the playhead's
         // position is a binary search. countableBase[k] / countablePrefix[k][i]: where line k, cell i
-        // sits in that stream, so the caret's position is a lookup. All immutable after construction.
-        private readonly double[] countableTargets;
+        // sits in that stream, so the caret's position is a lookup. The base and prefix are immutable
+        // after construction (which cells count never changes); countableTargets is rebuilt by
+        // rebuildCountableTargets whenever AlignSubdivisionTargets swaps the cells' target times.
+        private double[] countableTargets = Array.Empty<double>();
         private readonly int[] countableBase;
         private readonly int[][] countablePrefix;
 
@@ -1894,12 +1912,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
             countableBase = new int[lines.Count];
             countablePrefix = new int[lines.Count][];
-            var targets = new List<double>();
+            int countable = 0;
 
             for (int k = 0; k < lines.Count; k++)
             {
                 var cells = lines[k].Cells;
-                countableBase[k] = targets.Count;
+                countableBase[k] = countable;
                 var prefix = new int[cells.Count + 1];
 
                 for (int i = 0; i < cells.Count; i++)
@@ -1910,10 +1928,32 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                         continue;
 
                     prefix[i + 1]++;
-                    targets.Add(cells[i].TargetTime);
+                    countable++;
                 }
 
                 countablePrefix[k] = prefix;
+            }
+
+            rebuildCountableTargets();
+        }
+
+        /// <summary>
+        /// Re-read every countable cell's CURRENT target time into <see cref="countableTargets"/>.
+        /// Called at construction and again whenever <see cref="AlignSubdivisionTargets"/> swaps the
+        /// cells between the legacy and the aligned targets, so the playhead the rush cap measures
+        /// against is always the one this run is judged on.
+        /// </summary>
+        private void rebuildCountableTargets()
+        {
+            var targets = new List<double>();
+
+            foreach (var line in lines)
+            {
+                foreach (var cell in line.Cells)
+                {
+                    if (cell.IsCountable)
+                        targets.Add(cell.TargetTime);
+                }
             }
 
             // Overlapping lines can interleave their targets across a boundary, so sort rather than
@@ -2793,7 +2833,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         }
 
         /// <summary>
-        /// Process a lowercased char from KeyCharMap at gameplay time <paramref name="time"/>.
+        /// Process a char the input path produced (TextInputFold since backlog 383) at gameplay time <paramref name="time"/>.
         /// Returns false when inert (no active line / line complete / finished).
         /// A space pressed inside a word abandons it under <see cref="SpaceSkipsWord"/> (off by default).
         /// A space typed ON a space cell is UNTIMED (backlog 148): it is judged as though it landed on

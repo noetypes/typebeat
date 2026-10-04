@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using osu.Framework.Allocation;
 using osu.Framework.Bindables;
 using osu.Framework.Extensions;
@@ -16,10 +17,10 @@ using osu.Framework.Graphics.Shapes;
 using osu.Framework.Input;
 using osu.Framework.Input.Bindings;
 using osu.Framework.Input.Events;
-using osu.Framework.Platform;
 using osu.Framework.Timing;
 using typebeat.Game.Beatmaps;
 using typebeat.Game.Configuration;
+using typebeat.Game.Input;
 using typebeat.Game.Rulesets.Objects.Drawables;
 using typebeat.Game.Rulesets.Scoring;
 using typebeat.Game.Rulesets.TypeBeat.Configuration;
@@ -55,7 +56,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
 
         private readonly BindableDouble lyricOffset = new BindableDouble();
 
-        private readonly Bindable<KeyboardLayout> keyboardLayout = new Bindable<KeyboardLayout>(KeyboardLayout.Qwerty);
+        /// <summary>
+        /// How long the key handler pairs a key press with the text the OS commits for it (backlog 383;
+        /// the reasoning is on the handler's own <c>pairing_grace_ms</c>). Internal for the tests that wait it out.
+        /// </summary>
+        internal const double PAIRING_GRACE_MS = 50;
 
         // Tracks the user's background dim so a 100% dim restores the flat serika-dark backdrop
         // over the (then fully-black) beatmap image/video.
@@ -163,7 +168,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         private void load(TypeBeatRulesetConfigManager? config, IBindable<WorkingBeatmap>? beatmap, OsuConfigManager? osuConfig)
         {
             config?.BindWith(TypeBeatRulesetSetting.LyricOffsetMs, lyricOffset);
-            config?.BindWith(TypeBeatRulesetSetting.KeyboardLayout, keyboardLayout);
 
             // The wrong-input model is fixed for the play and is no longer a setting (backlog 107):
             // typing wrong chars through is the default, and TypeBeatModGatekeeper is the only thing
@@ -254,7 +258,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                         new EngineTicker(Engine, drawableRuleset),
                         stage = new LyricStage(Engine),
                         new TypeBeatHudOverlay(drawableRuleset?.Ruleset.RulesetInfo),
-                        new TypeBeatKeyHandler(Engine, keyboardLayout, drawableRuleset, this),
+                        new TypeBeatKeyHandler(Engine, drawableRuleset, this),
                     },
                 },
             });
@@ -633,7 +637,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         /// and Double Time understates it by 1/1.5.
         ///
         /// <para><see cref="GameplayClockExtensions.GetTrueGameplayRate"/> is the right source because it
-        /// reads the aggregate frequency/tempo actually in force, so it covers DT/NC/HT at ANY custom
+        /// reads the aggregate frequency/tempo actually in force, so it covers DT/NC/HT/DC at ANY custom
         /// slider value, both ramp mods and any future rate mod without enumerating them. Deliberately
         /// NOT <c>PerformancePoints.EligibleRate</c>: that answers a pp-eligibility question and returns
         /// null for a custom rate, but a custom-rate play still has a real typing speed worth showing.</para>
@@ -837,6 +841,17 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         /// has to be retyped). Which modifier it is, is
         /// <see cref="TypeBeatRuleset.RecoveryGestureModifier"/>'s to say.
         ///
+        /// <para>Since backlog 383 the CHARACTERS come from the OS, not from the key: a Latin play
+        /// activates the framework's text input (IME off) and types what the player's own layout
+        /// commits, folded to the surface by <see cref="TextInputFold"/>, through
+        /// <see cref="TypeLatinText"/>. The key path still owns everything that is not a character
+        /// (Backspace, the gestures, Enter, the instrumental-skip and manual-newline fall-throughs)
+        /// and decides, per press, whether the press is swallowed and what becomes of the text it
+        /// commits (<see cref="PressPlan"/>); each fresh press claims exactly one commit, which is
+        /// also what drops the OS's own key repeat. The engine and the replay format are untouched:
+        /// the engine already consumed (char, time), and the recorder already recorded the produced
+        /// character, so a stored run re-derives exactly as it did.</para>
+        ///
         /// <para>Since backlog 183 those two are REBINDABLE ruleset actions
         /// (<see cref="TypeBeatAction.EraseWord"/> / <see cref="TypeBeatAction.SelectBackToTypo"/>),
         /// so the chords above are defaults rather than constants, and every press is resolved
@@ -898,7 +913,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         private partial class TypeBeatKeyHandler : Drawable
         {
             private readonly TypingEngine engine;
-            private readonly IBindable<KeyboardLayout> keyboardLayout;
             private readonly DrawableTypeBeatRuleset? drawableRuleset;
             private readonly TypeBeatPlayfield playfield;
 
@@ -907,50 +921,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             [Resolved]
             private IGameplayClock? gameplayClock { get; set; }
 
-            /// <summary>
-            /// The window/platform host, the only place the live Caps Lock TOGGLE state is readable:
-            /// a <see cref="KeyDownEvent"/> carries the HELD modifiers (Shift/Ctrl/Alt/Super) but no
-            /// lock state. Nullable and null-checked because a bare drawable test scene need not
-            /// cache one, and because losing the toggle must degrade to Shift-only typing rather
-            /// than kill the run.
-            /// </summary>
-            [Resolved]
-            private GameHost? host { get; set; }
-
-
-            /// <summary>
-            /// Whether Caps Lock is currently ON, or false wherever that cannot be read.
-            ///
-            /// <para>Cross-platform via the framework, which covers all three shipped targets:
-            /// <c>WindowsGameHost</c> answers from <c>Console.CapsLock</c> (a <c>GetKeyState</c>
-            /// probe, no console required), and every other desktop host inherits
-            /// <c>SDLGameHost</c>'s answer, <c>SDL_GetModState() &amp; SDL_KMOD_CAPS</c>, which is
-            /// live on Linux and macOS alike. The <c>GameHost</c> base returns false, so a headless
-            /// host (the test suite) reports "off" rather than throwing. The read is a cheap state
-            /// probe done per keypress rather than cached, because the toggle can flip while the
-            /// game does not have focus and there is no event to invalidate a cache on.</para>
-            /// </summary>
-            private bool capsLockEnabled
-            {
-                get
-                {
-                    try
-                    {
-                        return host?.CapsLockEnabled == true;
-                    }
-                    catch
-                    {
-                        // A host whose probe is unavailable on its platform must not take gameplay
-                        // down with it; fall back to the Shift-only behaviour that shipped before.
-                        return false;
-                    }
-                }
-            }
-
-            public TypeBeatKeyHandler(TypingEngine engine, IBindable<KeyboardLayout> keyboardLayout, DrawableTypeBeatRuleset? drawableRuleset, TypeBeatPlayfield playfield)
+            public TypeBeatKeyHandler(TypingEngine engine, DrawableTypeBeatRuleset? drawableRuleset, TypeBeatPlayfield playfield)
             {
                 this.engine = engine;
-                this.keyboardLayout = keyboardLayout;
                 this.drawableRuleset = drawableRuleset;
                 this.playfield = playfield;
                 RelativeSizeAxes = Axes.Both;
@@ -974,24 +947,42 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             /// an unconfigurable one.</summary>
             private IEnumerable<IKeyBinding>? fallbackBindings;
 
+            private readonly IBindable<bool> isPaused = new BindableBool();
+
             protected override void LoadComplete()
             {
                 base.LoadComplete();
                 rulesetInput = this.FindClosestParent<TypeBeatInputManager>();
 
-                if (engine.Polyglot)
-                    activateTextInput();
+                // Text input is live exactly while key handling is (backlog 383): the ruleset input
+                // manager stops forwarding keys while the pause or fail overlay is up, and the text
+                // source is released for the same span, so a paused game never swallows text a menu
+                // or a chat box wanted. Both kinds of play ride it now: Polyglot for its scripts and
+                // IME, a Latin play for the OS layout's own characters.
+                if (drawableRuleset != null)
+                    isPaused.BindTo(drawableRuleset.IsPaused);
+
+                isPaused.BindValueChanged(paused =>
+                {
+                    if (paused.NewValue)
+                        deactivateTextInput();
+                    else
+                        activateTextInput();
+                }, true);
             }
 
-
-            #region Polyglot text input (backlog 331)
+            #region Text input (backlog 331, backlog 383)
 
             /// <summary>
-            /// The framework's TEXT INPUT source, the path text boxes use. Under the Polyglot mod the
-            /// characters come from here rather than from <see cref="KeyCharMap"/>: whatever the player's
-            /// OS layout commits (a dead key's "é", Cyrillic, Greek, Georgian, Armenian, direct kana, a
-            /// hangul key) is the character judged, and an IME (hanzi, kanji) composes before it commits.
-            /// Null in a bare test scene that caches none.
+            /// The framework's TEXT INPUT source, the path text boxes use, and since backlog 383 the
+            /// ONLY source of typed characters. Under the Polyglot mod (backlog 331) whatever the
+            /// player's OS layout commits (a dead key's "é", Cyrillic, Greek, Georgian, Armenian,
+            /// direct kana, a hangul key) is the character judged, and an IME (hanzi, kanji) composes
+            /// before it commits. In a LATIN play the OS's character goes through
+            /// <see cref="TextInputFold"/> to the ASCII surface, which is what retired the hand-written
+            /// layout tables (the deleted <c>KeyCharMap</c>) and the keyboard-layout setting with them:
+            /// Shift, Caps Lock, AltGr, dead keys and every national layout come from the OS. Null in a
+            /// bare test scene that caches none.
             /// </summary>
             [Resolved]
             private TextInputSource? textInput { get; set; }
@@ -1001,16 +992,44 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             /// <summary>The live IME composition, empty when none. Backspace, space and enter belong to the IME while it is not.</summary>
             private string imeComposition = string.Empty;
 
+            /// <summary>
+            /// The text input type a LATIN play activates with: <see cref="TextInputType.Code"/>, with IME
+            /// disallowed. Code is the framework's one plain-text type that turns the IME off on Windows
+            /// (<c>SupportsIme</c> is false for it, so the framework calls <c>ImmAssociateContext</c>
+            /// with nothing) and turns SDL's autocorrect off; it is NOT a password type, so macOS never
+            /// enters secure event input for it. A Latin play wants every key straight from the
+            /// layout: an IME left on would hold a Latin letter in a composition window rather than
+            /// commit it. Polyglot keeps <see cref="TextInputType.Text"/> with the IME allowed.
+            /// </summary>
+            internal static readonly TextInputProperties LATIN_TEXT_INPUT = new TextInputProperties(TextInputType.Code, AllowIme: false);
+
+            /// <summary>Polyglot's activation, unchanged since backlog 331: plain text, IME allowed.</summary>
+            internal static readonly TextInputProperties POLYGLOT_TEXT_INPUT = new TextInputProperties(TextInputType.Text, true);
+
             private void activateTextInput()
             {
                 // A replay's characters are the tape's, not the keyboard's: nothing is activated for playback.
-                if (textInput == null || drawableRuleset?.ReplayScore != null)
+                if (textInputActive || textInput == null || drawableRuleset?.ReplayScore != null)
                     return;
 
-                textInput.OnTextInput += onTextCommitted;
-                textInput.OnImeResult += onTextCommitted;
-                textInput.OnImeComposition += onImeComposition;
-                textInput.Activate(new TextInputProperties(TextInputType.Text, true), playfield.imeRectangle);
+                if (engine.Polyglot)
+                {
+                    textInput.OnTextInput += onTextCommitted;
+                    textInput.OnImeResult += onTextCommitted;
+                    textInput.OnImeComposition += onImeComposition;
+                    textInput.Activate(POLYGLOT_TEXT_INPUT, playfield.imeRectangle);
+                }
+                else
+                {
+                    // An IME RESULT is subscribed too: macOS composes a dead key through the text
+                    // input client (the accent arrives as marked text, then the composed letter as a
+                    // result rather than as plain text), and the framework routes a commit that ends
+                    // a composition to OnImeResult. The composition itself types nothing.
+                    textInput.OnTextInput += onLatinTextCommitted;
+                    textInput.OnImeResult += onLatinTextCommitted;
+                    textInput.Activate(LATIN_TEXT_INPUT, playfield.imeRectangle);
+                }
+
                 textInputActive = true;
             }
 
@@ -1019,11 +1038,30 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                 if (!textInputActive || textInput == null)
                     return;
 
-                textInput.OnTextInput -= onTextCommitted;
-                textInput.OnImeResult -= onTextCommitted;
-                textInput.OnImeComposition -= onImeComposition;
+                if (engine.Polyglot)
+                {
+                    textInput.OnTextInput -= onTextCommitted;
+                    textInput.OnImeResult -= onTextCommitted;
+                    textInput.OnImeComposition -= onImeComposition;
+
+                    // A composition the pause cut off is gone; the IME starts clean on resume.
+                    imeComposition = string.Empty;
+                    playfield.setImeComposition(imeComposition);
+                }
+                else
+                {
+                    textInput.OnTextInput -= onLatinTextCommitted;
+                    textInput.OnImeResult -= onLatinTextCommitted;
+                }
+
                 textInput.Deactivate();
                 textInputActive = false;
+
+                // Nothing typed before the pause may land after it.
+                lock (committedLock)
+                    committed.Clear();
+
+                waitingPresses.Clear();
             }
 
             protected override void Update()
@@ -1033,6 +1071,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                 // The IME's candidate window follows the caret while a composition is open.
                 if (textInputActive && imeComposition.Length > 0)
                     textInput?.SetImeRectangle(playfield.imeRectangle);
+
+                if (!engine.Polyglot)
+                    pairCommittedText();
             }
 
             protected override void Dispose(bool isDisposing)
@@ -1088,6 +1129,313 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
 
             #endregion
 
+            #region Latin text input (backlog 383)
+
+            /// <summary>
+            /// What a key press does with the text the OS commits for it, decided where the press is
+            /// judged (<see cref="OnKeyDown"/>), which is the only place every gate a typing key has
+            /// always had (the dead zones, the instrumental-skip fall-throughs, the manual newline,
+            /// the gestures) can still be asked.
+            /// </summary>
+            private enum PressPlan
+            {
+                /// <summary>Type the folded text, through the same gates a typing key had.</summary>
+                Type,
+
+                /// <summary>
+                /// Type the folded text, and if the platform committed none for the press, type the
+                /// SPACE it stands for: the spacebar's fallback, so a platform that does not emit a
+                /// space as text still skips words.
+                /// </summary>
+                Space,
+
+                /// <summary>
+                /// The key already did everything its press means (it fell through to a global binding,
+                /// typed a digit by position, or was a gesture), so the text it committed is consumed and
+                /// discarded rather than left for the next press to claim.
+                /// </summary>
+                Drop,
+            }
+
+            private sealed class PendingPress
+            {
+                public PressPlan Plan;
+
+                /// <summary>When the press was made, on <see cref="pairingClock"/>.</summary>
+                public double Since;
+            }
+
+            private sealed class CommittedText
+            {
+                public readonly string Text;
+
+                /// <summary>When an update first saw this commit, on <see cref="pairingClock"/>; NaN until one has.</summary>
+                public double Since = double.NaN;
+
+                /// <summary>Whether no update has seen it yet, i.e. it arrived in the same pump as the keys being handled now.</summary>
+                public bool Fresh = true;
+
+                public CommittedText(string text)
+                {
+                    Text = text;
+                }
+            }
+
+            /// <summary>
+            /// How long a press may wait for its commit, and a commit for its press, before the
+            /// pairing gives up on it, in REAL milliseconds.
+            ///
+            /// <para>WHY THE PAIRING EXISTS. A text event carries no key and no timestamp, and the
+            /// framework delivers the two halves of one keystroke on different paths: the SDL pump
+            /// (one batch on the window thread) hands the KEY_DOWN to the keyboard handler's pending
+            /// inputs and, immediately after, the TEXT_INPUT to the text source, and the update thread
+            /// applies the first through the input managers and this handler's queue through
+            /// <see cref="Update"/>. On Windows, macOS and X11 without an input method the two are
+            /// produced by the same OS event and dispatched microseconds apart, so they almost always
+            /// meet in the same update frame, and otherwise one frame apart (measured and bounded in
+            /// <c>docs/drafts/0383-text-input-timing.md</c>). An input-method bus (IBus or Fcitx on
+            /// Linux, Wayland's text-input protocol) can hand the commit back a little later. So each
+            /// fresh press claims ONE commit and waits for it up to this long, and each commit waits
+            /// as long for a press.</para>
+            ///
+            /// <para>THAT IS ALSO WHAT DROPS OS KEY REPEAT. A held key makes the OS commit its character
+            /// again and again, but the framework never reports those repeats as new presses (the key
+            /// is already down, so no fresh KeyDownEvent is raised; its own timer-driven repeats carry
+            /// <see cref="KeyDownEvent.Repeat"/> and are not presses either). A repeated commit
+            /// therefore finds no press to claim it and is discarded once its grace is over: one
+            /// judgement per physical press, exactly the rule the key path always had (backlog 105
+            /// removed the game's own hold-to-repeat outright, so there is no second repeat to keep).
+            /// No OS starts repeating a held key sooner than about 250 ms after the press, five times
+            /// this grace, so a press that committed nothing (a dead key) has expired long before a
+            /// repeat could claim it. Backspace is a key, not text, and keeps its hold-to-erase.</para>
+            ///
+            /// <para>REAL time rather than gameplay time or frames: the frame-stability container
+            /// above the playfield can run this subtree several times in one real frame while it
+            /// catches up, and a rate mod stretches gameplay time, and neither is any time at all for
+            /// the window thread delivering the other half of a keystroke.</para>
+            /// </summary>
+            private const double pairing_grace_ms = PAIRING_GRACE_MS;
+
+            /// <summary>Real time for the pairing's grace, independent of every gameplay clock.</summary>
+            private readonly Stopwatch pairingClock = Stopwatch.StartNew();
+
+            private double pairingNow => pairingClock.Elapsed.TotalMilliseconds;
+
+            /// <summary>Commits from the text source, in arrival order. Filled on the window thread (live) or the update thread (tests), so locked.</summary>
+            private readonly List<CommittedText> committed = new List<CommittedText>();
+
+            private readonly object committedLock = new object();
+
+            /// <summary>Fresh presses still waiting for their commit, oldest first. Update thread only.</summary>
+            private readonly List<PendingPress> waitingPresses = new List<PendingPress>();
+
+            private bool latinTextInputActive => textInputActive && !engine.Polyglot;
+
+            private void onLatinTextCommitted(string text)
+            {
+                if (string.IsNullOrEmpty(text))
+                    return;
+
+                lock (committedLock)
+                    committed.Add(new CommittedText(text));
+            }
+
+            /// <summary>
+            /// The commit a NEW press produced, if it has already arrived: the oldest one that arrived
+            /// since the last update (the same pump as this key, so almost surely its own), else the
+            /// oldest one still in its grace. Preferring the fresh one is what keeps a press made while
+            /// another key is HELD from claiming a repeat of the held key, and a press after a dead key
+            /// (whose own press committed nothing and is still waiting) from leaving its character to
+            /// that older press.
+            /// </summary>
+            private string? claimCommittedText()
+            {
+                lock (committedLock)
+                {
+                    int index = committed.FindIndex(t => t.Fresh);
+
+                    if (index < 0 && committed.Count > 0)
+                        index = 0;
+
+                    if (index < 0)
+                        return null;
+
+                    string text = committed[index].Text;
+                    committed.RemoveAt(index);
+                    return text;
+                }
+            }
+
+            /// <summary>Pairs every press still waiting with the commits that have arrived, oldest with oldest.</summary>
+            private List<(PendingPress press, string? text)>? pairWaitingPresses()
+            {
+                List<(PendingPress press, string? text)>? resolved = null;
+
+                lock (committedLock)
+                {
+                    while (waitingPresses.Count > 0 && committed.Count > 0)
+                    {
+                        (resolved ??= new List<(PendingPress, string?)>()).Add((waitingPresses[0], committed[0].Text));
+                        waitingPresses.RemoveAt(0);
+                        committed.RemoveAt(0);
+                    }
+                }
+
+                return resolved;
+            }
+
+            private void resolveAll(List<(PendingPress press, string? text)>? resolved, double time)
+            {
+                if (resolved == null)
+                    return;
+
+                foreach (var (press, text) in resolved)
+                    resolvePress(press.Plan, text, time);
+            }
+
+            /// <summary>
+            /// The per-update half of the pairing: presses still waiting claim the commits that have
+            /// arrived, then whatever has outlived its grace is given up on. A commit given up on was
+            /// an OS repeat (or a stray with no press); a press given up on committed nothing (a dead
+            /// key, a key with no character on the layout), except that the spacebar then types its
+            /// space.
+            /// </summary>
+            private void pairCommittedText()
+            {
+                if (!latinTextInputActive)
+                    return;
+
+                double now = pairingNow;
+                var resolved = pairWaitingPresses();
+
+                lock (committedLock)
+                {
+                    foreach (var text in committed)
+                    {
+                        text.Fresh = false;
+
+                        if (double.IsNaN(text.Since))
+                            text.Since = now;
+                    }
+
+                    committed.RemoveAll(t => now - t.Since > pairing_grace_ms);
+                }
+
+                for (int i = 0; i < waitingPresses.Count; i++)
+                {
+                    var press = waitingPresses[i];
+
+                    if (now - press.Since <= pairing_grace_ms)
+                        continue;
+
+                    waitingPresses.RemoveAt(i--);
+
+                    if (press.Plan == PressPlan.Space)
+                        (resolved ??= new List<(PendingPress, string?)>()).Add((press, null));
+                }
+
+                resolveAll(resolved, Math.Round(Time.Current));
+            }
+
+            /// <summary>
+            /// Carries out what <paramref name="plan"/> says with the commit a press produced
+            /// (<paramref name="text"/>, null when it committed nothing), at <paramref name="time"/>.
+            /// Returns whether anything was typed.
+            /// </summary>
+            private bool resolvePress(PressPlan plan, string? text, double time)
+            {
+                switch (plan)
+                {
+                    case PressPlan.Drop:
+                        return false;
+
+                    case PressPlan.Space when text == null:
+                        return TypeLatinText(" ", time);
+
+                    default:
+                        return text != null && TypeLatinText(text, time);
+                }
+            }
+
+            /// <summary>
+            /// Registers one fresh press for the pairing and resolves it on the spot when its commit
+            /// is already here. Returns whether anything was typed.
+            /// </summary>
+            private bool pressFor(PressPlan plan, double time)
+            {
+                if (!latinTextInputActive)
+                {
+                    // No text source at all (a bare scene) or none live: the spacebar alone still works,
+                    // by its key, which is the fallback the text path promises.
+                    return plan == PressPlan.Space && TypeLatinText(" ", time);
+                }
+
+                string? text = claimCommittedText();
+
+                if (text != null)
+                    return resolvePress(plan, text, time);
+
+                waitingPresses.Add(new PendingPress { Plan = plan, Since = pairingNow });
+                return false;
+            }
+
+            /// <summary>
+            /// Types a piece of COMMITTED text in a LATIN play (backlog 383): every press
+            /// <see cref="TextInputFold.Fold"/> makes of it (a base letter for an accented one, "ss"
+            /// for 'ß', marks only under Literate, nothing for a character the surface cannot hold) is
+            /// one ordinary <see cref="TypingEngine.ProcessKey"/> call at <paramref name="time"/>,
+            /// recorded exactly as a key press always was, so the replay format and the engine are
+            /// untouched and a stored run re-derives cell for cell. The gates are the ones a typing key
+            /// had on the key path: nothing before the line (or the first line's head start) opens, and
+            /// on a finished line only the typed-through newline may take a letter. Returns whether
+            /// anything was typed.
+            /// </summary>
+            internal bool TypeLatinText(string text, double time)
+            {
+                // Nothing while paused, during playback, or while another control holds focus (a chat
+                // box can have activated text input too, and its characters are its own).
+                if (engine.Polyglot || drawableRuleset?.ReplayScore != null || drawableRuleset?.IsPaused.Value == true || !HasFocus)
+                    return false;
+
+                engine.Update(time, wpmClockRate(gameplayClock));
+
+                if (!engine.LineIsActive && !engine.FirstLineTypingOpensAt(time))
+                    return false;
+
+                bool typed = false;
+
+                foreach (char c in TextInputFold.Fold(text, engine.Literate))
+                {
+                    // A FINISHED line takes a letter only as the typed-through newline (the era bit
+                    // engine.NewlineOnTypedLetter carries), and never a space: the space that closes a
+                    // line is the manual newline, which the spacebar's key decides (OnKeyDown).
+                    if (engine.IsLineComplete && playfield.CurrentRetypeSelection is null)
+                    {
+                        if (c != ' ' && engine.NewlineOnTypedLetter && engine.ProcessKey(c, time))
+                        {
+                            drawableRuleset?.RecordTypingInput(c, time);
+                            typed = true;
+                        }
+
+                        continue;
+                    }
+
+                    // A retype selection is consumed FIRST, so this press lands on the anchor cell:
+                    // mass backspace, then the ordinary judged keypress (backlog 182).
+                    collapseSelection(time);
+
+                    if (engine.ProcessKey(c, time))
+                    {
+                        drawableRuleset?.RecordTypingInput(c, time);
+                        typed = true;
+                    }
+                }
+
+                return typed;
+            }
+
+            #endregion
+
             protected override bool OnKeyDown(KeyDownEvent e)
             {
                 // POLYGLOT (backlog 331): while an IME composition is open, the keys that edit it are the
@@ -1097,6 +1445,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                                     && (e.Key == Key.BackSpace || e.Key == Key.Space || e.Key == Key.Enter || e.Key == Key.KeypadEnter || e.Key == Key.Escape))
                     return true;
 
+                // A FRESH press of a key that commits text (backlog 383). The framework's own repeats
+                // are not presses, and the OS's repeats never arrive as key events at all; see
+                // pairing_grace_ms for how their commits are dropped. A Ctrl or Command chord is not
+                // one either: no platform commits text for it (SDL drops the control characters), so
+                // letting it wait would only hand it the next key's character. Ctrl+Alt stays one,
+                // because that is how Windows reports AltGr, and Option (Alt) alone on macOS commits.
+                bool freshTextPress = !engine.Polyglot && !e.Repeat && TypingKeys.CommitsText(e.Key)
+                                      && !e.SuperPressed && (!e.ControlPressed || e.AltPressed);
 
                 // Which word-level gesture (if any) this press triggers under the user's CURRENT
                 // bindings (backlog 183; backlog 182 hardcoded Ctrl+Backspace and Ctrl+A here).
@@ -1109,13 +1465,23 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                 // shadowed for as long as the key would type, and types. Nothing else is survivable:
                 // the whole lyric surface is typeable, so a letter that silently stopped typing
                 // mid-run could not be recovered from without leaving gameplay. No modifier chord
-                // types, so no modifier chord is ever shadowed.
+                // types, so no modifier chord is ever shadowed. Since backlog 383 "would type" is the
+                // key's place in the block (the OS decides the character itself): a letter, a digit
+                // or the spacebar always, a punctuation position under Literate, where marks are cells.
                 if (gesture != null
                     && !e.ControlPressed && !e.AltPressed && !e.SuperPressed
-                    && KeyCharMap.TryMap(e.Key, keyboardLayout.Value, e.ShiftPressed, engine.Literate, capsLockEnabled, out _))
+                    && typesHere(e.Key))
                 {
                     gesture = null;
                 }
+
+                // ...and an ALTGR chord is a character, never a gesture (backlog 383). Windows reports
+                // AltGr as Ctrl+Alt, and the gestures match their modifiers loosely
+                // (TypeBeatInputManager's matching mode), so without this a Polish AltGr+A ('ą') would
+                // select back to the last typo instead of typing its 'a'. A Latin play only: Polyglot's
+                // characters come through the IME path, and its keys stay as they were.
+                if (gesture != null && freshTextPress && e.ControlPressed && e.AltPressed)
+                    gesture = null;
 
                 // Let framework shortcuts (every modifier combo that is not a bound gesture) fall
                 // through. Super is in the list for macOS, where it is the platform's editing
@@ -1123,7 +1489,16 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                 // (TypeBeatRuleset.RecoveryGestureModifier), so leaving it out would have every
                 // OTHER Command chord fall through to the typing path and land in the lyric.
                 if ((e.ControlPressed || e.AltPressed || e.SuperPressed) && gesture == null)
+                {
+                    // ...but whatever such a chord COMMITS is still typed (backlog 383): on Windows
+                    // AltGr arrives as Ctrl+Alt, and on macOS Option is Alt, and both are how a
+                    // layout reaches the characters it has no plain key for ('@', '[', a Polish 'ę').
+                    // A real shortcut commits nothing, so its press simply expires.
+                    if (freshTextPress)
+                        pressFor(PressPlan.Type, Math.Round(Time.Current));
+
                     return false;
+                }
 
                 // Millisecond-quantised keystroke time: what the engine judges at, what gets
                 // recorded, and what the .osr format can store exactly. Sub-ms quantisation is far
@@ -1143,7 +1518,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                 // from, so a press inside its head start (FIRST_LINE_LEAD_MS) is consumed and opens it,
                 // rather than falling through to a global binding for the whole second before its word.
                 if (!engine.LineIsActive && !engine.FirstLineTypingOpensAt(time))
-                    return false;
+                    return dropPress(freshTextPress, time);
 
                 // An UNPINNED caret (the default since backlog 208) parks at the head of the next
                 // line the instant you finish one, so a line stays "active" straight through an
@@ -1164,18 +1539,17 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                 //
                 // (Gated on there being no bound gesture on this press, so binding one onto a Space
                 // chord is not swallowed by the skip fall-through.)
-                // A freestyle slot can legitimately open before the song reaches this line.
-                // Within its judgement window, Space is the slot's input rather than a skip.
+                // A freestyle slot can open before the song reaches this line. Space is its input within that window.
                 if (engine.FletcherEnabled && gesture == null && e.Key == Key.Space && !engine.SongIsOnTheCaretsLine && engine.ActiveLineUntouched
                     && !engine.FreestyleInputWindowOpen(time))
-                    return false;
+                    return dropPress(freshTextPress, time);
 
                 if (gesture == TypeBeatAction.EraseWord || (gesture == null && e.Key == Key.BackSpace))
                 {
                     // Gatekeeper rejects wrong keys, including a space inside a word, so a plain
                     // backspace has nothing to undo. A retype selection can still be consumed.
                     if (!engine.AllowWrongInput && playfield.CurrentRetypeSelection is null)
-                        return true;
+                        return dropPress(freshTextPress, time, true);
 
                     // Repeat honoured: hold to erase, monkeytype-style. Handled BEFORE the
                     // line-complete fall-through: backspacing at line end must keep working (it is
@@ -1193,7 +1567,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                             drawableRuleset?.RecordTypingInput(TypeBeatReplayFrame.BACKSPACE, time);
                     }
 
-                    return true;
+                    return dropPress(freshTextPress, time, true);
                 }
 
                 if (gesture == TypeBeatAction.SelectBackToTypo)
@@ -1213,7 +1587,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                     if (anchor >= 0)
                         playfield.applyRetypeSelection(new RetypeSelection(engine.ActiveLineIndex, anchor, engine.CaretIndex));
 
-                    return true;
+                    return dropPress(freshTextPress, time, true);
                 }
 
                 if (gesture == TypeBeatAction.SkipLine)
@@ -1234,10 +1608,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                     // parked (or on a line typed out) the engine no-ops and the press falls through
                     // to its global binding, which is what it did before this gesture existed.
                     if (!engine.ProcessEnter(time))
-                        return false;
+                        return dropPress(freshTextPress, time);
 
                     drawableRuleset?.RecordTypingInput(TypeBeatReplayFrame.ENTER, time);
-                    return true;
+                    return dropPress(freshTextPress, time, true);
                 }
 
                 // The active line is fully typed: the engine is inert for character keys
@@ -1272,6 +1646,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                     // not opened for is refused, and then falls through exactly as this state always
                     // did; a LETTER keeps falling through untouched, which is what keeps the mid-song
                     // skip overlay reachable through an instrumental gap.
+                    //
+                    // The newline space stays on the KEY (backlog 383): whether it is taken decides
+                    // whether the press falls through, and only the engine can answer that, now.
                     if (engine.ManualNewlines)
                     {
                         bool space = e.Key == Key.Space;
@@ -1280,7 +1657,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                         if ((space || enter) && (space ? engine.ProcessKey(' ', time) : engine.ProcessEnter(time)))
                         {
                             drawableRuleset?.RecordTypingInput(space ? ' ' : TypeBeatReplayFrame.ENTER, time);
-                            return true;
+                            return dropPress(freshTextPress, time, true);
                         }
                     }
 
@@ -1292,15 +1669,15 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                     // overlay reachable through an instrumental gap. This is the arm the engine's own
                     // rule needs to be reachable at all: without it a letter never gets past this
                     // block, however the engine is configured.
-                    if (engine.NewlineOnTypedLetter && !e.Repeat
-                        && KeyCharMap.TryMap(e.Key, keyboardLayout.Value, e.ShiftPressed, engine.Literate, capsLockEnabled, out char typedThrough)
-                        && engine.ProcessKey(typedThrough, time))
-                    {
-                        drawableRuleset?.RecordTypingInput(typedThrough, time);
-                        return true;
-                    }
+                    //
+                    // Since backlog 383 the letter is the OS's character, typed by TypeLatinText,
+                    // which asks the engine the same question. When the commit is already here the
+                    // answer decides the fall-through exactly as before; when it lands a frame later
+                    // the press has already fallen through, and the letter still hands the line on.
+                    if (engine.NewlineOnTypedLetter && freshTextPress && e.Key != Key.Space)
+                        return pressFor(PressPlan.Type, time);
 
-                    return false;
+                    return dropPress(freshTextPress, time);
                 }
 
                 // POLYGLOT (backlog 331): characters arrive as committed TEXT (see TypeCommittedText), so a
@@ -1323,37 +1700,98 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                         return true;
                     }
 
-                    return KeyCharMap.TryMap(e.Key, keyboardLayout.Value, e.ShiftPressed, true, capsLockEnabled, out _);
+                    return polyglotSwallows(e);
                 }
 
-                // Pass Shift AND the Caps Lock toggle through so either route to a capital works,
-                // required for the Literate (case-sensitive) mod; folded away harmlessly in normal
-                // play. For letters the map takes shift XOR caps, so Shift held under caps lock
-                // types lower case, exactly as the player's keyboard would. The punctuation surface
-                // opens for the same mod, and ONLY for it: without it a comma key stays inert (no
-                // wrong-key combo break for a habitual comma) and Shift+digit still produces the
-                // digit, exactly as before.
-                if (KeyCharMap.TryMap(e.Key, keyboardLayout.Value, e.ShiftPressed, engine.Literate, capsLockEnabled, out char c))
+                // A LATIN TYPING KEY on an active, unfinished line (backlog 383). The character is
+                // whatever the OS commits for the press, folded to the surface and typed when it
+                // arrives (usually this very frame, see pressFor); the key itself decides only
+                // whether the press is swallowed, so a letter never reaches a global binding mid-line.
+                if (TypingKeys.CommitsText(e.Key))
                 {
                     // The framework's own auto-repeat is discarded outright: one judgement per
                     // physical press, never a machine-gun run at the keyboard's repeat rate.
-                    if (!e.Repeat)
-                    {
-                        // A retype selection is consumed FIRST, so this key lands on the anchor
-                        // cell: mass backspace, then the ordinary judged keypress. Space is not
-                        // special here, nor is any other typeable key: "collapse, then process
-                        // normally" is the whole rule.
-                        collapseSelection(time);
+                    if (e.Repeat)
+                        return typesHere(e.Key);
 
-                        if (engine.ProcessKey(c, time))
-                            drawableRuleset?.RecordTypingInput(c, time);
+                    // The default surface keeps the digit row POSITIONAL (see TypingKeys.TryPositionalDigit).
+                    if (!engine.Literate && TypingKeys.TryPositionalDigit(e.Key, out char digit))
+                    {
+                        dropPress(true, time);
+                        TypeLatinText(digit.ToString(), time);
+                        return true;
                     }
 
-                    return true;
+                    bool typed = pressFor(e.Key == Key.Space ? PressPlan.Space : PressPlan.Type, time);
+
+                    // A letter, a digit and the spacebar are swallowed whatever they committed, as
+                    // they always were. The rest of the block (the punctuation positions, the keypad
+                    // operators) is swallowed exactly when its commit TYPED: under Literate a mark is
+                    // a cell and is kept from its global binding, while an inert legend (a US '`' or
+                    // '=') falls through to it as it always did; and without the mod a German 'ß' on
+                    // the US Minus position types "ss" and must not also nudge the offset, while a US
+                    // hyphen there stays inert and still reaches that binding.
+                    return TypingKeys.AlwaysSwallowed(e.Key) || typed;
                 }
 
                 return false;
             }
+
+            /// <summary>
+            /// Whether a key counts as a TYPING key before its commit is known: for the gesture
+            /// shadowing (typing always wins) and for a framework repeat, which commits nothing of
+            /// its own. <see cref="TypingKeys.AlwaysSwallowed"/>, plus a punctuation position under Literate,
+            /// where marks are cells.
+            /// </summary>
+            private bool typesHere(Key key) => TypingKeys.AlwaysSwallowed(key) || (engine.Literate && TypingKeys.IsPunctuationPosition(key));
+
+            /// <summary>
+            /// What a Polyglot play swallows as a character key, unchanged since backlog 331, where it
+            /// was "the key would type with the punctuation surface open" on the US table: every
+            /// letter and digit (top row or keypad) and the spacebar, the punctuation positions that
+            /// carry a supported mark on either legend, and of the three with a mark on only one, the
+            /// legend that has it (the brackets unshifted, the tilde shifted).
+            /// </summary>
+            private static bool polyglotSwallows(KeyDownEvent e)
+            {
+                if (TypingKeys.AlwaysSwallowed(e.Key))
+                    return true;
+
+                switch (e.Key)
+                {
+                    case Key.Comma:
+                    case Key.Period:
+                    case Key.Quote:
+                    case Key.Minus:
+                    case Key.Slash:
+                    case Key.Semicolon:
+                        return true;
+
+                    case Key.BracketLeft:
+                    case Key.BracketRight:
+                        return !e.ShiftPressed;
+
+                    case Key.Tilde:
+                        return e.ShiftPressed;
+
+                    default:
+                        return false;
+                }
+            }
+
+            /// <summary>
+            /// The press did everything it means on the key (it fell through, or was a gesture), so
+            /// its commit is claimed and discarded rather than left for the next press. Returns
+            /// <paramref name="handled"/>, the key's own answer.
+            /// </summary>
+            private bool dropPress(bool freshTextPress, double time, bool handled = false)
+            {
+                if (freshTextPress)
+                    pressFor(PressPlan.Drop, time);
+
+                return handled;
+            }
+
 
             /// <summary>
             /// Erase back to <paramref name="target"/> with ordinary
