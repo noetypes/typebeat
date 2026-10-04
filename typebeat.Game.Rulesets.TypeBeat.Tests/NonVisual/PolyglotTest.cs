@@ -632,7 +632,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
                 Assert.That(mod.Type, Is.EqualTo(ModType.Conversion));
                 Assert.That(mod.Ranked, Is.False);
                 Assert.That(mod.LocalOnly, Is.True);
-                Assert.That(mod.Description.ToString(), Is.EqualTo("Type the lyric in its original script."));
+                Assert.That(mod.Description.ToString(), Is.EqualTo("Type the lyric in its original script. Japanese maps accept romaji."));
                 Assert.That(calculator.CalculateFor(new Mod[] { mod }), Is.EqualTo(1.0).Within(1e-9));
                 Assert.That(new TypeBeatRuleset().AllMods.Count(m => m.Acronym == "PG"), Is.EqualTo(1), "the acronym is free");
                 Assert.That(ModUtils.CheckCompatibleSet(new Mod[] { mod, new TypeBeatModLiterate(), new TypeBeatModDoubleTime() }), Is.True, "incompatible with nothing by rule");

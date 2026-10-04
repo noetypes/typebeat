@@ -165,6 +165,49 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 return Task.Run(() => converter.Value.GetDivisions(source)).GetAwaiter().GetResult();
         }
 
+        /// <summary>A dictionary reading, aligned with the original UTF-16 character range.</summary>
+        internal readonly record struct Reading(int Start, int Length, string Kana);
+
+        /// <summary>
+        /// Read the complete run for context, retaining kanji word boundaries for input and ruby text.
+        /// Kana and Latin text need no dictionary lookup. Unknown words remain direct-input cells.
+        /// </summary>
+        internal static IReadOnlyList<Reading> Read(string source)
+        {
+            if (!source.Any(Utilities.IsKanji))
+                return new[] { new Reading(0, source.Length, source) };
+
+            try
+            {
+                var result = new List<Reading>();
+                int at = 0;
+
+                foreach (JapaneseElement element in getDivisions(source).SelectMany(d => d))
+                {
+                    string surface = element.Element;
+                    if (surface.Length == 0 || at + surface.Length > source.Length
+                        || !source.AsSpan(at, surface.Length).SequenceEqual(surface.AsSpan()))
+                        return Array.Empty<Reading>();
+
+                    string kana = element.HiraNotation;
+                    if (!surface.Any(Utilities.IsKanji))
+                        kana = surface;
+                    if (!string.IsNullOrEmpty(kana) && (!surface.Any(Utilities.IsKanji) || kana.All(Utilities.IsKana)))
+                        result.Add(new Reading(at, surface.Length, kana));
+                    at += surface.Length;
+                }
+
+                return at == source.Length ? result : Array.Empty<Reading>();
+            }
+            catch (Exception e)
+            {
+                logFailure(e);
+                return Array.Empty<Reading>();
+            }
+        }
+
+        internal static bool IsJapanese(string? language) => isJapanese(language);
+
         private static bool isJapanese(string? language)
             => string.Equals(language?.Trim(), "japanese", StringComparison.OrdinalIgnoreCase)
                || string.Equals(language?.Trim(), "ja", StringComparison.OrdinalIgnoreCase);

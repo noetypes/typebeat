@@ -14,6 +14,7 @@ using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
 using typebeat.Game.Rulesets.TypeBeat.Objects;
 using typebeat.Game.Screens.Play;
 using typebeat.Game.Tests.Visual;
+using typebeat.Game.Utils;
 
 namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
 {
@@ -92,6 +93,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         [Test]
         public void BackgroundPassClassifiesMapsWithAlreadyStoredPace()
         {
+            if (!DevelopmentFeatures.DifficultyTags)
+                Assert.Ignore("Difficulty tags are development-only.");
+
             Guid id = Guid.Empty;
             TestProcessor processor = null!;
             AddStep("save freestyle map", () => id = save(new TypeBeatBeatmap

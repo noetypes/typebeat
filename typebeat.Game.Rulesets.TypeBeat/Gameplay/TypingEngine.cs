@@ -989,11 +989,131 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// <see cref="PolyglotLine"/>), fixed at construction for the reason <see cref="Literate"/>
         /// is, and a press is matched against a cell in Unicode NFC (see
         /// <see cref="PolyglotText.Matches"/>). The input path is the OS's committed TEXT, kept in its
-        /// own script rather than folded by <see cref="TextInputFold"/>, which only the playfield has to
-        /// know. A MOD and not an era: a score carries it in its mod list, and no stored run can
+        /// own script rather than folded by <see cref="TextInputFold"/>. Japanese maps accept romaji
+        /// through the internal processor under <see cref="JapaneseRomajiInput"/> instead.
+        /// A MOD and not an era: a score carries it in its mod list, and no stored run can
         /// carry a mod that did not exist.
         /// </summary>
         public bool Polyglot { get; }
+
+        /// <summary>Japanese Polyglot uses the internal romaji processor instead of an OS IME.</summary>
+        public bool UsesJapaneseRomaji { get; }
+
+        /// <summary>Extended replay bit 4; absent on older, committed-text Polyglot replays.</summary>
+        private bool japaneseRomajiInput;
+        public bool JapaneseRomajiInput
+        {
+            get => japaneseRomajiInput;
+            set
+            {
+                if (japaneseRomajiInput == value)
+                    return;
+                japaneseRomajiInput = value;
+                clearJapanesePending();
+            }
+        }
+
+        private string japanesePending = string.Empty;
+        private int japanesePendingLine = -1;
+        private int japanesePendingCell = -1;
+        private double japanesePendingTime;
+        private bool committingJapanese;
+
+        public string JapanesePending => japanesePendingLine == activeLineIndex && japanesePendingCell == caretIndex
+            ? japanesePending : string.Empty;
+
+        private void clearJapanesePending()
+        {
+            japanesePending = string.Empty;
+            japanesePendingLine = japanesePendingCell = -1;
+        }
+
+        private bool? processJapaneseKey(char c, double time, TypingLine line)
+        {
+            if (!JapaneseRomajiInput || !UsesJapaneseRomaji || committingJapanese || MashingEnabled || line.Cells[caretIndex].IsFreestyle)
+                return null;
+
+            if (japanesePendingLine != activeLineIndex || japanesePendingCell != caretIndex)
+                clearJapanesePending();
+
+            if (charMatches(c, line.Cells[caretIndex].Expected))
+            {
+                clearJapanesePending();
+                return null; // Direct kana layouts and legacy committed characters still work.
+            }
+
+            var plan = line.JapaneseInput;
+            var group = plan?.At(caretIndex);
+            if (group == null)
+            {
+                char expected = line.Cells[caretIndex].Expected;
+                char equivalent = expected is >= '\uff01' and <= '\uff5e' ? (char)(expected - 0xfee0) : expected switch
+                {
+                    '、' => ',', '。' => '.', '「' or '『' => '[', '」' or '』' => ']',
+                    _ => expected,
+                };
+                if (equivalent != expected && (CaseSensitive ? c == equivalent : char.ToLowerInvariant(c) == char.ToLowerInvariant(equivalent)))
+                {
+                    clearJapanesePending();
+                    committingJapanese = true;
+                    try
+                    {
+                        return ProcessKey(expected, time);
+                    }
+                    finally
+                    {
+                        committingJapanese = false;
+                    }
+                }
+                return null;
+            }
+
+            char lower = char.ToLowerInvariant(c);
+            string input = japanesePending + lower;
+            var match = JapaneseRomaji.Matches(group.Reading, input, plan!.Following(group));
+            if (match == JapaneseRomaji.Match.Invalid)
+            {
+                // A nasal's first n may also begin nn. The following consonant resolves that
+                // ambiguity without being lost: commit n at its own time, then process this key.
+                if ((JapaneseRomaji.Matches(group.Reading, japanesePending, plan.Following(group)) & JapaneseRomaji.Match.Complete) != 0)
+                {
+                    commitJapanese(group, japanesePendingTime);
+                    return ProcessKey(c, time);
+                }
+                if (AllowWrongInput)
+                    clearJapanesePending();
+                return null; // Gatekeeper keeps a valid prefix when it rejects the wrong key.
+            }
+
+            japanesePending = input;
+            japanesePendingLine = activeLineIndex;
+            japanesePendingCell = caretIndex;
+            japanesePendingTime = time;
+            if (match == JapaneseRomaji.Match.Complete)
+                commitJapanese(group, time);
+            return true;
+        }
+
+        private void commitJapanese(JapaneseInputPlan.Group group, double time)
+        {
+            int lineIndex = activeLineIndex;
+            clearJapanesePending();
+            committingJapanese = true;
+            try
+            {
+                while (activeLineIndex == lineIndex && caretIndex < group.EndCellExclusive)
+                {
+                    int before = caretIndex;
+                    ProcessKey(lines[lineIndex].Cells[caretIndex].Expected, time);
+                    if (caretIndex == before && activeLineIndex == lineIndex)
+                        break;
+                }
+            }
+            finally
+            {
+                committingJapanese = false;
+            }
+        }
 
         /// <summary>
         /// Whether a press of <paramref name="c"/> satisfies a cell expecting
@@ -1893,6 +2013,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             Literate = literate;
             CaseSensitive = literate;
             Polyglot = polyglot;
+            UsesJapaneseRomaji = polyglot && JapaneseReading.IsJapanese(polyglotLanguage);
+            JapaneseRomajiInput = UsesJapaneseRomaji;
 
             lines = new List<TypingLine>(beatmap.Lines.Count);
 
@@ -2037,6 +2159,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// </summary>
         private void reset()
         {
+            clearJapanesePending();
             foreach (var line in lines)
             {
                 foreach (var cell in line.Cells)
@@ -2779,6 +2902,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// </summary>
         public bool ProcessEnter(double time)
         {
+            bool pending = JapanesePending.Length > 0;
+            clearJapanesePending();
+            return processEnter(time) || pending;
+        }
+
+        private bool processEnter(double time)
+        {
             if (isFinished || activeLineIndex == -1)
                 return false;
 
@@ -2853,6 +2983,15 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// clears the typo where it sits.
         /// </summary>
         public bool ProcessKey(char c, double time)
+        {
+            string pending = JapanesePending;
+            bool consumed = processKey(c, time);
+            // Cancelling a partial reading is itself an input mutation, even when the underlying
+            // key (such as a refused space) judges nothing. Record it so replay state stays exact.
+            return consumed || pending != JapanesePending;
+        }
+
+        private bool processKey(char c, double time)
         {
             // THE MAP'S FIRST LINE OPENS A SECOND EARLY (see FIRST_LINE_LEAD_MS). There is no previous
             // line to rush from, so the PRESS is what opens it: the same hand-over the time-driven
@@ -2931,6 +3070,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             armWpmClockAheadOfTheCue(time);
 
             var cell = line.Cells[caretIndex];
+
+            if (processJapaneseKey(c, time, line) is bool japaneseConsumed)
+                return japaneseConsumed;
 
             // Mashing substitutes ordinary cells only. Freestyle already accepts every char,
             // including space, and must keep exactly the character the player pressed.
@@ -3887,10 +4029,16 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             if (lastRequired?.IsFreestyle != true)
                 return true;
 
-            foreach (var next in lines[activeLineIndex + 1].Cells)
+            var nextLine = lines[activeLineIndex + 1];
+            for (int i = 0; i < nextLine.Cells.Count; i++)
             {
-                if (next.IsTypeable)
-                    return next.IsFreestyle || charMatches(c, next.Expected);
+                var next = nextLine.Cells[i];
+                if (!next.IsTypeable)
+                    continue;
+                if (next.IsFreestyle || charMatches(c, next.Expected))
+                    return true;
+                var group = JapaneseRomajiInput ? nextLine.JapaneseInput?.At(i) : null;
+                return group != null && JapaneseRomaji.Matches(group.Reading, char.ToLowerInvariant(c).ToString(), nextLine.JapaneseInput!.Following(group)) != JapaneseRomaji.Match.Invalid;
             }
 
             return true;
@@ -4251,6 +4399,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
         public bool ProcessBackspace()
         {
+            if (JapaneseRomajiInput && JapanesePending.Length > 0)
+            {
+                japanesePending = japanesePending[..^1];
+                return true;
+            }
+            clearJapanesePending();
             if (isFinished || activeLineIndex == -1)
                 return false;
 

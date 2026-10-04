@@ -201,6 +201,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
     /// <para>Only EFFECTIVE inputs are recorded (calls where the engine mutated state), which is what
     /// makes playback deterministic: replaying performs, per frame, <c>Update(Time)</c> then the
     /// keystroke, the same call sequence live play makes.</para>
+    /// <para><b>Second word, bit 4 (value 16): <see cref="JapaneseRomajiInput"/>.</b>
+    /// Japanese Polyglot presses contain raw romaji, including accepted partial prefixes and
+    /// backspaces. The engine converts completed readings to the unchanged original-script cells.
+    /// With this bit absent, frames are committed characters as before this input processor.</para>
     /// </summary>
     public class TypeBeatReplayFrame : ReplayFrame, IConvertibleReplayFrame
     {
@@ -531,6 +535,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
         /// </summary>
         public bool AlignSubdivisionTargets;
 
+        /// <summary>Bit 4 of the extended word: Japanese Polyglot frames carry raw romaji.</summary>
+        public bool JapaneseRomajiInput;
+
         /// <summary>
         /// The ANCHOR carried by a bit-9 CONFIG frame: the track position the tape was started at,
         /// which is also the origin of the wall axis every other frame in the run is stamped on. It
@@ -613,12 +620,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
         /// Parameters are append-only and named, as <see cref="CreateConfigFrame"/>'s are; each one
         /// defaults to clear, which is what a replay with no extended frame decodes to.
         /// </summary>
-        public static TypeBeatReplayFrame CreateExtendedConfigFrame(double time, bool rushCapCostsAccuracy = false, bool inputEra2 = false, bool authoredSyllablesOnly = false, bool alignSubdivisionTargets = false) => new TypeBeatReplayFrame(time, CONFIG_EXTENDED)
+        public static TypeBeatReplayFrame CreateExtendedConfigFrame(double time, bool rushCapCostsAccuracy = false, bool inputEra2 = false, bool authoredSyllablesOnly = false, bool alignSubdivisionTargets = false, bool japaneseRomajiInput = false) => new TypeBeatReplayFrame(time, CONFIG_EXTENDED)
         {
             RushCapCostsAccuracy = rushCapCostsAccuracy,
             InputEra2 = inputEra2,
             AuthoredSyllablesOnly = authoredSyllablesOnly,
             AlignSubdivisionTargets = alignSubdivisionTargets,
+            JapaneseRomajiInput = japaneseRomajiInput,
         };
 
         /// <summary>Bit 0 of the EXTENDED CONFIG frame's (second) flags word: an over-cap press was
@@ -636,6 +644,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
 
         /// <summary>Bit 3: per-character timing follows the editor's effective subdivision cuts.</summary>
         private const int ext_flag_align_subdivision_targets = 8;
+
+        private const int ext_flag_japanese_romaji_input = 16;
 
         /// <summary>Bit 0 of the CONFIG frame's flags word: wrong input allowed (fixed by every replay on disk).</summary>
         private const int flag_allow_wrong_input = 1;
@@ -724,6 +734,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                 InputEra2 = (flags & ext_flag_input_era_2) != 0;
                 AuthoredSyllablesOnly = (flags & ext_flag_authored_syllables_only) != 0;
                 AlignSubdivisionTargets = (flags & ext_flag_align_subdivision_targets) != 0;
+                JapaneseRomajiInput = (flags & ext_flag_japanese_romaji_input) != 0;
                 return;
             }
 
@@ -753,7 +764,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
             (RushCapCostsAccuracy ? ext_flag_rush_cap_costs_accuracy : 0)
             | (InputEra2 ? ext_flag_input_era_2 : 0)
             | (AuthoredSyllablesOnly ? ext_flag_authored_syllables_only : 0)
-            | (AlignSubdivisionTargets ? ext_flag_align_subdivision_targets : 0);
+            | (AlignSubdivisionTargets ? ext_flag_align_subdivision_targets : 0)
+            | (JapaneseRomajiInput ? ext_flag_japanese_romaji_input : 0);
 
         private int configFlags() =>
             (AllowWrongInput ? flag_allow_wrong_input : 0)

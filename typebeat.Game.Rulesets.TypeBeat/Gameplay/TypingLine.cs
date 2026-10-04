@@ -222,6 +222,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// </summary>
         public string DisplayText { get; }
 
+        private bool japanese;
+        private LyricLine? japaneseAuthoredLine;
+        private JapaneseInputPlan? japaneseInput;
+        internal JapaneseInputPlan? JapaneseInput => japanese ? japaneseInput ??= JapaneseInputPlan.Create(DisplayText, japaneseAuthoredLine) : null;
+
         public IReadOnlyList<TypingCell> Cells { get; }
 
         public double StartTime { get; }
@@ -630,7 +635,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 return FromLyricLine(line, literate, alignSubdivisionTargets);
 
             var derived = PolyglotLine.Derive(line, language);
-            return withTargetEra(build(derived.Line, literate, CellRules.Polyglot, derived.NaturalSplits, derived.RawCluster), alignSubdivisionTargets);
+            var result = withTargetEra(build(derived.Line, literate, CellRules.Polyglot, derived.NaturalSplits, derived.RawCluster), alignSubdivisionTargets);
+            result.japanese = JapaneseReading.IsJapanese(language);
+            result.japaneseAuthoredLine = line;
+            return result;
         }
 
         /// <summary>
