@@ -17,6 +17,7 @@ using typebeat.Game.Rulesets.TypeBeat.Objects;
 using typebeat.Game.Rulesets.TypeBeat.Replays;
 using typebeat.Game.Rulesets.TypeBeat.Scoring;
 using typebeat.Game.Rulesets.TypeBeat.UI;
+using typebeat.Game.Scoring;
 using typebeat.Game.Screens.Edit.GameplayTest;
 using typebeat.Game.Tests.Visual;
 
@@ -57,6 +58,29 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
 
             beatmap.HitObjects.Add(new TypeBeatHitObject { StartTime = line.StartTime, LineIndex = 0, Line = line, Granularity = TimingGranularity.Word });
 
+            // A SECOND line, deliberately: the assertions below need a live play. This fixture's first line is
+            // the map's whole content otherwise, so autoplay's final press would also be the map's last event
+            // and the run would seal at once (EarlyFinish, carried in the header the toggle attaches - see
+            // AutoplayFinishesOnItsLastPress). EditorPlayer then exits the test play RESULTS_DISPLAY_DELAY
+            // after ScoreProcessor.HasCompleted, taking the playfield with it, and the era-carry teardown
+            // below has nothing left to read. With a second line still to be typed the run does not finish,
+            // so the tail runs while the play is up. Line 2 is never typed; it only has to exist.
+            var trailing = new LyricLine
+            {
+                RawText = "let you down",
+                StartTime = 4500,
+                EndTime = 7000,
+                SingEndTime = 6000,
+                Units = new[]
+                {
+                    new TimedUnit { Text = "let", StartTime = 4500, EndTime = 5000, Source = TimingSource.Explicit },
+                    new TimedUnit { Text = "you", StartTime = 5000, EndTime = 5500, Source = TimingSource.Explicit },
+                    new TimedUnit { Text = "down", StartTime = 5500, EndTime = 6000, Source = TimingSource.Explicit },
+                },
+            };
+
+            beatmap.HitObjects.Add(new TypeBeatHitObject { StartTime = trailing.StartTime, LineIndex = 1, Line = trailing, Granularity = TimingGranularity.Word });
+
             return beatmap;
         }
 
@@ -86,16 +110,47 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             double expectedRate = editorRate;
 #endif
             string expectedPp = "", expectedWpm = "";
-            AddStep("calculate expected counters at the build's rate", () =>
+            AddStep("calculate expected counters at the selected rate", () =>
             {
                 var state = editorPlayer()!.GameplayState;
                 var source = state.Beatmap.HitObjects.OfType<TypeBeatHitObject>().Select(h => h.Line).ToArray();
-                var difficulty = LyricDifficulty.ComputeDetail(source, expectedRate);
-                var counts = PerformancePoints.CountNotes(state.ScoreProcessor.Statistics)
-                    with { DifficultCharacters = difficulty.DifficultCharacters };
-                expectedPp = PerformancePointsDisplay.Format(PerformancePoints.ForPlay(difficulty.Stars, counts,
-                    state.ScoreProcessor.Accuracy.Value, state.ScoreProcessor.HighestCombo.Value, state.Mods,
-                    PerformancePoints.PlayedDurationFor(source, state.Mods) / expectedRate));
+                // A map stretched to the editor's tempo should have the same current price as
+                // its preview. Use the results surface so changes to pp's length factor remain
+                // covered without depending on a particular ForPlay overload.
+                var pricedMap = new TypeBeatBeatmap
+                {
+                    HitObjects = source.Select(line => new TypeBeatHitObject
+                    {
+                        Granularity = TimingGranularity.Word,
+                        Line = new LyricLine
+                        {
+                            RawText = line.RawText,
+                            StartTime = line.StartTime / expectedRate,
+                            EndTime = line.EndTime / expectedRate,
+                            SingEndTime = line.SingEndTime / expectedRate,
+                            Units = line.Units.Select(unit => new TimedUnit
+                            {
+                                Text = unit.Text,
+                                StartTime = unit.StartTime / expectedRate,
+                                EndTime = unit.EndTime / expectedRate,
+                                Source = unit.Source,
+                            }).ToArray(),
+                        },
+                    }).ToList(),
+                };
+                pricedMap.BeatmapInfo.Status = BeatmapOnlineStatus.Ranked;
+                var expectedScore = new ScoreInfo
+                {
+                    BeatmapInfo = pricedMap.BeatmapInfo,
+                    Ruleset = new TypeBeatRuleset().RulesetInfo,
+                    Passed = true,
+                    Rank = state.ScoreProcessor.Rank.Value,
+                    Accuracy = state.ScoreProcessor.Accuracy.Value,
+                    MaxCombo = state.ScoreProcessor.HighestCombo.Value,
+                    Statistics = state.ScoreProcessor.Statistics.ToDictionary(pair => pair.Key, pair => pair.Value),
+                    Mods = state.Mods.ToArray(),
+                };
+                expectedPp = PerformancePointsDisplay.Format(PerformancePointsDisplay.ForScore(expectedScore, pricedMap));
 
                 var reference = new TypingEngine(new LyricBeatmap
                 {

@@ -113,6 +113,23 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         public DrawableTypeBeatRuleset(TypeBeatRuleset ruleset, IBeatmap beatmap, IReadOnlyList<Mod>? mods = null)
             : base(ruleset, beatmap, mods)
         {
+            // Every scoring object's hit windows follow the engine's EFFECTIVE ladder rather than the
+            // default one, so the hit error meter's bands (and the lifetime bounds osu derives from
+            // the windows) match what the engine actually judges on once mods have rescaled it. Read
+            // through the field, not Engine, so querying a window never builds the engine early.
+            Func<SyncWindows> source = () => engine?.Windows ?? SyncWindows.Default;
+
+            foreach (var line in Beatmap.HitObjects)
+            {
+                if (line.HitWindows is TypeBeatHitWindows lineWindows)
+                    lineWindows.WindowsSource = source;
+
+                foreach (var nested in line.NestedHitObjects)
+                {
+                    if (nested.HitWindows is TypeBeatHitWindows charWindows)
+                        charWindows.WindowsSource = source;
+                }
+            }
         }
 
         protected override Playfield CreatePlayfield() => new TypeBeatPlayfield(Engine);
@@ -452,6 +469,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
 
                 // Character targets and the caret use the same cuts as the editor subdivisions.
                 AlignSubdivisionTargets = true,
+
+                // EARLY FINISH (bit 4 of the second CONFIG word): the final line seals the moment it
+                // is fully typed correctly instead of at its own end. Set UNCONDITIONALLY like every
+                // era flag here; every replay recorded before it seals the final line at its end.
+                EarlyFinish = true,
 
                 FlexibleCaretFromMod = legacyFletcher,
 
