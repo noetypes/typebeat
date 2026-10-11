@@ -141,6 +141,90 @@ without any the song is aligned as usual. In the game it is offered beside
 the import and the editor's "Generate timing", and remembered per map set.
 `--self-test-estimated` pins the layout.
 
+### Fused evidence (`--evidence fused`, version 10, opt-in)
+
+Without the new flags, version 10 is version 9: every output file is byte-identical apart
+from `aligner_version`, and none of the new code is imported. `--evidence fused` adds a
+second acoustic model for English lyrics: the QMUL singing-trained phoneme CTC
+(LyricsAlignment-Multilingual, Huang, Benetos, Ewert; trained on DALI; MIT licensed; 57 MB;
+5 to 10 s per song on one thread). It runs on the same 16 kHz stem as the MMS_FA views
+and is combined three ways:
+
+- the **QMUL path**: its evidence through the same version 9 decoders (each phone becomes a
+  pseudo-letter, the posteriors are resampled to the 20 ms grid, the `*` column is MMS_FA's
+  constant one, 2 nats dearer in stamped modes);
+- the **ep path**: the MMS_FA letters through the stamped decoder with the QMUL evidence added
+  per letter (each letter's aligned phone, `w * max(log p, floor)`);
+- `--fuse median3` (default): each word's median start over the version 9, QMUL and ep paths
+  (auto mode: the QMUL path alone, the ep hook exists only in the stamped decoder);
+  `--fuse qmul` and `--fuse ep` keep one path.
+
+Under `--fuse qmul` with stamps, a QMUL-path start more than 5 s from version 9's keeps
+version 9's (the engine block reports `guard_ms` and `guarded_words`): on the ranked corpus
+the QMUL path alone moved 26 words that far under exact stamps, and one of them landed within
+200 ms of the map. The median and ep paths
+have no guard; on the corpus a guard only made their few large moves worse.
+
+Measured on the 135 English maps of the ranked corpus (154 maps, 37,083 words; word starts
+within 200 ms of the map; paired map bootstrap; `bench/altmodels/results/CORPUS_TABLE_ENGLISH.md`):
+
+| stamps | version 9 | version 10 fused | difference [95 % CI] | MAE ms |
+|---|---|---|---|---|
+| exact line stamps | 93.01 % | **95.72 %** | +2.71 [+2.24, +3.15] | 118 -> 101 |
+| human-style stamps (250 +- 120 ms early) | 91.90 % | **95.20 %** | +3.29 [+2.78, +3.81] | 123 -> 105 |
+| none (`--anchors auto`) | 83.59 % | **91.62 %** | +8.03 [+5.80, +10.31] | 1366 -> 488 |
+
+On the 98 of those maps that played no part in choosing the method or its constants the differences are
++2.65, +3.21 and +7.57 points; on independent maps (no aligner seed in their history) +2.70,
++3.49 and +7.74. With the mappers' own stamps (10 maps) the gain is +1.79 [-0.50, +3.99],
+too few maps to decide. The extra cost per song is the QMUL pass (5 to 10 s on one thread)
+and two more decodes (a few seconds), against the MMS_FA views' two to three minutes.
+
+Words where the version 9 and QMUL paths start more than 200 ms apart carry `"review": true`
+in timing.json (an editor hint; the game ignores the field today). `--lyrics-language NAME`
+routes: only `english` runs the fused path; without the flag a conservative detector decides
+(ASCII letters and common English words). Anything else, a missing dependency (`phonemizer`,
+`espeakng-loader`) or weights that cannot be fetched falls back to version 9 with a logged
+reason. The weights are downloaded once from a pinned commit and checked by sha256. Measured
+effect and the evidence behind every choice: `bench/altmodels/RESULTS.md`. Shipping it in the
+game needs the steps in `bench/altmodels/PORTING.md`.
+
+### espeak-ng on a non-ASCII path (version 11)
+
+Version 11 changes no output; it keeps the fused path's espeak-ng start-up from ending the
+whole run. espeak-ng reads its data dir through the narrow (ANSI) C file API, so on Windows
+an `espeakng-loader` installed under a path with any non-ASCII character (a user profile named
+José) could not be read: espeak fell back to the data path compiled into the wheel
+(`D:/a/espeakng-loader/...`, its CI build dir) and then called C `exit(1)`, which no Python
+`except` survives, so the run failed instead of falling back to version 9. Now:
+
+- `espeak_data_path` hands espeak the wheel's own data dir when it (and what it resolves to) is
+  ASCII, else a copy at `%ProgramData%\typebeat\espeak-ng-data-<espeakng-loader version>`
+  (about 18 MB, made once per version into a temporary sibling renamed into place, reused
+  after), else raises before espeak is touched. An 8.3 short name does not work: phonemizer
+  resolves the data path it is given, which turns a short name back into the long one.
+- `espeak_probe` first starts espeak and phonemizes one word in a child Python (15 s timeout,
+  once per process), so any other `exit()` inside espeak's start-up is a logged fall back too.
+
+`--self-test-espeak` pins both. The "version 11 candidates" in `bench/altmodels/RESULTS.md`
+are version 12 candidates now.
+
+### Separate only (`--separate-only`, version 11)
+
+```powershell
+.venv\Scripts\python.exe align_lyrics.py "<song.mp3>" --separate-only -o out\mysong
+```
+
+Runs the audio half of an alignment and stops: the song is decoded, Demucs separates the vocals
+and the stem is resampled to 16 kHz mono exactly as an alignment run does it (same `work/` file
+names, so either run reuses the other's separation; `--demucs-model`, `--device` and `--threads`
+apply), and only `vocals.wav` is written to `-o`. The lyrics argument is optional under the flag
+(given, it is not read) and still required without it; `--no-separate` contradicts it and is
+refused. The game runs it after an import that never aligned (line or word stamps, a TTML, a blank
+map) when the player asked for the vocals to be isolated, so the editor's vocals waveform has a
+stem. No output changes for any other run; `--self-test-separate` pins the argument rules and the
+file plumbing with ffmpeg and Demucs stubbed.
+
 ## Evidence tiers (`--quality`, version 6)
 
 One MMS_FA pass guesses at what it barely hears, and its chunk seams every
@@ -183,6 +267,23 @@ fails the loudness-levelled views that way. The timing.json `engine` block
 records `quality`, the `views` fused, `quant` (`int8` or `fp32`) and, for int8,
 `quant_engine` and `torch_threads` (the count that produced the views; a list
 when the cached views came from different counts).
+
+## Model-swap bench (`bench/altmodels/`, 2026-10-06)
+
+A self-contained bench that holds lyrics, audio and decoding fixed and swaps the acoustic
+model, to answer whether a singing-trained aligner, a different speech CTC model or Whisper
+would beat MMS_FA. It also refreshes the ranked-map corpus from typebeat.sh with per-map
+provenance (TTML import, hand-stamped LRC, plain text, or an aligner seed) and runs the shipped
+CLI on it as the baseline. Start with `bench/altmodels/RESULTS.md`; `PLAN.md` has the protocol,
+`ENVIRONMENT.md` the cloud-container compute and network findings, `CANDIDATES.md` the models
+not yet integrated.
+
+```bash
+# the refreshed corpus (154 ranked maps) and the paired comparison against the shipped aligner
+python -m bench.altmodels.corpus fetch --out <corpus dir>
+python -m bench.altmodels.corpus_queue --corpus <corpus dir> --threads 3
+python -m bench.altmodels.corpus_table
+```
 
 ## Accuracy, version 6 (ranked-map corpus, 2026-09-30)
 
@@ -327,20 +428,27 @@ Recreate with [uv](https://docs.astral.sh/uv/):
 uv venv .venv --python 3.11
 uv pip install --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchaudio==2.5.1
 uv pip install --python .venv\Scripts\python.exe demucs==4.0.1 soundfile pyphen num2words tqdm
+# optional, the fused evidence path (version 10); without it the aligner runs version 9's
+uv pip install --python .venv\Scripts\python.exe phonemizer espeakng-loader
 ```
 
 (torch 2.5.x pinned deliberately: 2.6 flips `torch.load(weights_only=True)`
 which breaks Demucs checkpoint loading. Python 3.11 pinned for wheel
 coverage.)
 
-`setup.ps1` / `setup.sh` do the same and, as their last step, write
-`.venv/.typebeat-setup-ok`. The game treats the aligner as installed only when
-that sentinel exists; a venv built by hand without it shows as "Repair" in the
-game's settings, and Repair keeps it (writing the sentinel) if its packages
-import, or rebuilds it if they do not.
+`setup.ps1` / `setup.sh` do the same (the fused-evidence pair best effort, by
+its own call, then its weights through `qmul_weights_path`) and, as their last
+step, write `.venv/.typebeat-setup-ok`. The game treats the aligner as
+installed only when that sentinel exists; a venv built by hand without it shows
+as "Repair" in the game's settings, and Repair keeps it (writing the sentinel)
+if its packages import, or rebuilds it if they do not. The pair is not part of
+that import check, so a platform without an `espeakng-loader` wheel still
+installs. `setup.ps1 -Update` / `setup.sh --update` bring a completed install
+up to the script's package set in place (torch untouched, nothing removed);
+the game's Update button runs it after copying newer scripts.
 
 Models cache in `%USERPROFILE%\.cache\torch\hub\checkpoints` (~1.3 GB total:
-MMS_FA aligner + htdemucs).
+MMS_FA aligner + htdemucs, plus 57 MB for the QMUL weights of the fused path).
 
 ## Known limitations / future work
 

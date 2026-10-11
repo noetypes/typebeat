@@ -71,6 +71,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
 
         private LyricStage stage = null!;
 
+        /// <summary>Urgency of the actual forced-line cutoff, on the same offset clock as typing.</summary>
+        internal float LinePushWarningProgress
+        {
+            get
+            {
+                if (lyricClock.IsNull() || Engine.DragCutoffAt is not double cutoff || lyricClock.CurrentTime >= cutoff)
+                    return 0;
+
+                return (float)Math.Clamp(1 - (cutoff - lyricClock.CurrentTime) / TypingEngine.FLETCHER_DRAG_GRACE_MS, 0, 1);
+            }
+        }
+
         /// <summary>
         /// A live RETYPE SELECTION (backlog 182): the half-open cell range
         /// [<see cref="StartCell"/>, <see cref="EndCell"/>) of line <see cref="LineIndex"/> that a
@@ -1558,9 +1570,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                 //
                 // (Gated on there being no bound gesture on this press, so binding one onto a Space
                 // chord is not swallowed by the skip fall-through.)
-                // A freestyle slot can open before the song reaches this line. Space is its input within that window.
-                if (engine.FletcherEnabled && gesture == null && e.Key == Key.Space && !engine.SongIsOnTheCaretsLine && engine.ActiveLineUntouched
-                    && !engine.FreestyleInputWindowOpen(time))
+                if (engine.FletcherEnabled && gesture == null && e.Key == Key.Space && !engine.SongIsOnTheCaretsLine && engine.ActiveLineUntouched)
                     return dropPress(freshTextPress, time);
 
                 if (gesture == TypeBeatAction.EraseWord || (gesture == null && e.Key == Key.BackSpace))

@@ -37,6 +37,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         [TearDownSteps]
         public void RestoreSettings() => AddStep("restore pop-in defaults", () =>
         {
+            config.SetValue(TypeBeatRulesetSetting.PaceBarReveal, PaceBarRevealMode.Build);
+            config.SetValue(TypeBeatRulesetSetting.JudgementColouredBars, false);
+            config.SetValue(TypeBeatRulesetSetting.ShowPaceColours, true);
             config.SetValue(TypeBeatRulesetSetting.ApproachBars, false);
             config.SetValue(TypeBeatRulesetSetting.JudgementIndicator, JudgementIndicatorMode.FadeIn);
             config.SetValue(TypeBeatRulesetSetting.PaceColourGradient, 0f);
@@ -53,6 +56,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         {
             AddStep("create lyrics with pop-in", () =>
             {
+                config.SetValue(TypeBeatRulesetSetting.PaceBarReveal, PaceBarRevealMode.Build);
+                config.SetValue(TypeBeatRulesetSetting.JudgementColouredBars, false);
+                config.SetValue(TypeBeatRulesetSetting.ShowPaceColours, true);
                 config.SetValue(TypeBeatRulesetSetting.ApproachBars, false);
                 config.SetValue(TypeBeatRulesetSetting.JudgementIndicator, JudgementIndicatorMode.None);
                 config.SetValue(TypeBeatRulesetSetting.PaceColourGradient, 100f);
@@ -314,7 +320,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                        && Math.Abs(clip.Width - glyph.Width) < 0.01;
             });
             if (text == "cat")
-                AddAssert("syllable fills together", () => Enumerable.Range(0, 3).All(i => Math.Abs(display.CellColourFillFraction(i) - 0.5f) < 0.0001));
+                AddAssert("syllable fills letter by letter", () => display.Line.Cells[1].TargetTime > display.Line.Cells[0].TargetTime + 200
+                    && display.CellColourFillFraction(1) == 0 && display.CellColourFillFraction(2) == 0 && colourIs(1, TypeBeatStyle.UntypedChar));
             else
                 AddAssert("next character waits for its own target", () => display.CellColourFillFraction(index + 1) == 0 && colourIs(index + 1, TypeBeatStyle.UntypedChar));
             AddStep("adjust fill brightness live", () => config.SetValue(TypeBeatRulesetSetting.SyllableBrightness, 80f));

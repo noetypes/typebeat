@@ -92,41 +92,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         }
 
         /// <summary>
-        /// Backlog 381: with the "use local auto-aligner" switch hidden, an installed aligner always
-        /// runs. A stored False left by an older install (the player who once switched it off) is
-        /// IGNORED, not migrated: the import path opens the gate anyway, and the stored value is left
-        /// exactly as it was so a surfaced switch would honour it again. Both arms pinned, plus the
-        /// shipped default, so flipping the flag back cannot silently strand anyone either.
-        /// </summary>
-        [Test]
-        public void HiddenLocalAlignerSwitchIgnoresAStoredFalseWithoutRewritingIt()
-        {
-            using (var config = new TypeBeatRulesetConfigManager(null, new TypeBeatRuleset().RulesetInfo))
-            {
-                Assert.That(config.Get<bool>(TypeBeatRulesetSetting.LocalAlignerEnabled), Is.True, "the dormant setting defaults on");
-                Assert.That(LyricMapImportService.LocalAlignerEnabled(config), Is.True);
-
-                // An old install's stored opt-out.
-                config.SetValue(TypeBeatRulesetSetting.LocalAlignerEnabled, false);
-
-                Assert.That(LyricMapImportService.LocalAlignerEnabled(config), Is.True,
-                    "a hidden switch must not keep an installed aligner from running");
-                Assert.That(config.Get<bool>(TypeBeatRulesetSetting.LocalAlignerEnabled), Is.False,
-                    "the stored choice is kept for a returning hosted aligner, never rewritten");
-
-                // Surfaced again, the same stored row is honoured as it was left.
-                Assert.That(LyricMapImportService.LocalAlignerEnabled(config, toggleSurfaced: true), Is.False);
-
-                config.SetValue(TypeBeatRulesetSetting.LocalAlignerEnabled, true);
-                Assert.That(LyricMapImportService.LocalAlignerEnabled(config, toggleSurfaced: true), Is.True);
-            }
-
-            // No config to read (the service before the cache resolves) reads as on in both arms.
-            Assert.That(LyricMapImportService.LocalAlignerEnabled(null), Is.True);
-            Assert.That(LyricMapImportService.LocalAlignerEnabled(null, toggleSurfaced: true), Is.True);
-        }
-
-        /// <summary>
         /// The high-accuracy setting reaches the aligner as <c>--quality full</c>, and ONLY then: off
         /// (the default) adds no quality flag at all, so the run takes the script's own fast default.
         /// Walked from the setting itself through the service's read of it to the built command line,
@@ -189,7 +154,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
 
             Assert.That(LyricMapImporter.AlignerHasQualityTiers(lab), Is.EqualTo(expectFlag));
 
-            var args = LyricMapImporter.AlignerArguments(lab, "a.mp3", "l.txt", "out", "[00:01.00] hello\n", true);
+            var args = withoutFusedEvidenceFlags(LyricMapImporter.AlignerArguments(lab, "a.mp3", "l.txt", "out", "[00:01.00] hello\n", true));
 
             if (expectFlag)
                 Assert.That(args.TakeLast(2), Is.EqualTo(new[] { "--quality", "full" }));
@@ -220,7 +185,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
 
             Assert.That(LyricMapImporter.EstimatedVocalsApply(lab, lyrics, mode), Is.EqualTo(expectFlag));
 
-            var args = LyricMapImporter.AlignerArguments(lab, "a.mp3", "l.txt", "out", lyrics, false, mode);
+            var args = withoutFusedEvidenceFlags(LyricMapImporter.AlignerArguments(lab, "a.mp3", "l.txt", "out", lyrics, false, mode));
             string anchors = LyricMapImporter.AlignerAnchorMode(lyrics);
 
             if (expectFlag)
@@ -247,6 +212,120 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
 
             Assert.That(LyricMapImporter.AlignerArguments(lab, "a.mp3", "l.txt", "out", stamped, true),
                 Is.EqualTo(LyricMapImporter.AlignerArguments(lab, "a.mp3", "l.txt", "out", stamped, true, AlignerVocalMode.Aligned)));
+        }
+
+        /// <summary>The command line with backlog 411's fused-evidence flags taken out, for tests about the other flags.</summary>
+        private static List<string> withoutFusedEvidenceFlags(IReadOnlyList<string> args)
+        {
+            var kept = new List<string>();
+
+            for (int i = 0; i < args.Count; i++)
+            {
+                if (args[i] == "--evidence" || args[i] == "--lyrics-language")
+                    i++;
+                else
+                    kept.Add(args[i]);
+            }
+
+            return kept;
+        }
+
+        /// <summary>
+        /// Backlog 411: every run of a version 10 or newer script asks for the fused evidence path
+        /// and names the import's language, which the aligner routes on (only English takes the path).
+        /// An older script would exit 2 on either unknown option and cost the import its word timing,
+        /// so it gets neither, read off its version like <c>--quality</c>. The flags come last and ride
+        /// alongside every other option; no language means no <c>--lyrics-language</c>, so the
+        /// aligner's own detector decides.
+        /// </summary>
+        [TestCase("ALIGNER_VERSION = \"9\"\n", "english", null)]
+        [TestCase("ALIGNER_VERSION = \"10\"\n", "english", "english")]
+        [TestCase("ALIGNER_VERSION = \"12\"\n", "japanese", "japanese")]
+        [TestCase("ALIGNER_VERSION = \"10\"\n", "  English ", "english")]
+        [TestCase("ALIGNER_VERSION = \"10\"\n", null, "")]
+        [TestCase("ALIGNER_VERSION = \"10\"\n", "   ", "")]
+        [TestCase("ALIGNER_VERSION = \"10b\"\n", "english", null)]
+        [TestCase("# a version-1 script, no constant\n", "english", null)]
+        public void FusedEvidenceFlagsAreGatedOnTheScriptVersion(string script, string? language, string? expectedLanguage)
+        {
+            string lab = makeLab();
+            File.WriteAllText(Path.Combine(lab, "align_lyrics.py"), script);
+            const string stamped = "[00:01.00] hello\n[00:02.00] world\n";
+            var core = new List<string> { "align_lyrics.py", "a.mp3", "l.txt", "-o", "out", "--anchors", "ref" };
+
+            // The unreadable versions predate the tiers too.
+            if (LyricMapImporter.AlignerHasQualityTiers(lab))
+                core.AddRange(new[] { "--quality", "full" });
+
+            var args = LyricMapImporter.AlignerArguments(lab, "a.mp3", "l.txt", "out", stamped, true, language: language);
+
+            Assert.That(LyricMapImporter.AlignerHasFusedEvidence(lab), Is.EqualTo(expectedLanguage != null));
+
+            if (expectedLanguage == null)
+                Assert.That(args, Is.EqualTo(core));
+            else if (expectedLanguage.Length == 0)
+                Assert.That(args, Is.EqualTo(core.Concat(new[] { "--evidence", "fused" })));
+            else
+                Assert.That(args, Is.EqualTo(core.Concat(new[] { "--evidence", "fused", "--lyrics-language", expectedLanguage })));
+        }
+
+        /// <summary>
+        /// The game ships the aligner whose flags it passes: the vendored script is version 10 or
+        /// newer and declares both options, so a fresh install or an update is never handed a flag
+        /// it would reject. Found the way <see cref="ShippedAlignerAcceptsVocalModes"/> finds it.
+        /// </summary>
+        [Test]
+        public void ShippedAlignerAcceptsFusedEvidence()
+        {
+            string lab = Path.GetDirectoryName(vendoredAlignerScript())!;
+            string script = File.ReadAllText(vendoredAlignerScript());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(LyricMapImporter.AlignerHasFusedEvidence(lab), Is.True, $"vendored aligner version {LyricMapImporter.ReadAlignerVersion(lab)}");
+                Assert.That(script, Does.Contain("ap.add_argument(\"--evidence\", choices=[\"mms\", \"fused\"]"));
+                Assert.That(script, Does.Contain("ap.add_argument(\"--lyrics-language\""));
+
+                // The weights fetch the setup scripts call (see ShippedSetupScriptsInstallTheFusedEvidencePackages).
+                Assert.That(script, Does.Contain("def qmul_weights_path():"));
+            });
+        }
+
+        /// <summary>
+        /// The vendored aligner starts espeak-ng only through its guards (backlog 412): an ASCII data
+        /// path, else a RuntimeError, and a child-process probe first, so a player whose install path
+        /// is not ASCII falls back to version 9 instead of losing the whole run to espeak's C exit(1).
+        /// Version 11 or newer, so the version gate offers every installed version 10 the update.
+        /// </summary>
+        [Test]
+        public void ShippedAlignerGuardsEspeakStartup()
+        {
+            string lab = Path.GetDirectoryName(vendoredAlignerScript())!;
+            string script = File.ReadAllText(vendoredAlignerScript());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(int.TryParse(LyricMapImporter.ReadAlignerVersion(lab), out int version) && version >= 11, Is.True,
+                    $"vendored aligner version {LyricMapImporter.ReadAlignerVersion(lab)}");
+                Assert.That(script, Does.Contain("library, data = espeakng_loader.get_library_path(), espeak_data_path()"));
+                Assert.That(script, Does.Contain("espeak_probe(library, data)"));
+                Assert.That(script, Does.Not.Contain("EspeakWrapper.set_data_path(espeakng_loader.get_data_path())"));
+            });
+        }
+
+        /// <summary>The vendored aligner script, the closest <c>lyriclab/align_lyrics.py</c> above the test directory.</summary>
+        private static string vendoredAlignerScript()
+        {
+            for (var dir = new DirectoryInfo(TestContext.CurrentContext.TestDirectory); dir != null; dir = dir.Parent)
+            {
+                string candidate = Path.Combine(dir.FullName, "lyriclab", "align_lyrics.py");
+
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+
+            Assert.Fail("the vendored lyriclab/align_lyrics.py was not found above the test directory");
+            return null!;
         }
 
         /// <summary>
@@ -1460,6 +1539,185 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
                 Assert.That(lines, Has.Some.Contains("verifying the installed packages import"));
         }
 
+        /// <summary>
+        /// Backlog 411: both shipped setup scripts install the same required set and the same
+        /// version 10 fused-evidence pair (phonemizer, espeakng-loader) by its own call, and fetch
+        /// its weights through the aligner's own function; and the pair stays OUT of the import
+        /// check that gates the sentinel (and of the adoption probe, which shares it), so a platform
+        /// without an espeakng-loader wheel still gets an installed aligner that runs the version 9
+        /// path.
+        /// </summary>
+        [Test]
+        public void ShippedSetupScriptsInstallTheFusedEvidencePackages()
+        {
+            string lab = vendoredLyricLab();
+            string ps1 = File.ReadAllText(Path.Combine(lab, "setup.ps1"));
+            string sh = File.ReadAllText(Path.Combine(lab, "setup.sh"));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(ps1, Does.Contain($"$alignerPackages = '{LyricMapImporter.ALIGNER_PACKAGES}' -split ' '"));
+                Assert.That(sh, Does.Contain($"ALIGNER_PACKAGES='{LyricMapImporter.ALIGNER_PACKAGES}'"));
+                Assert.That(ps1, Does.Contain($"$fusedPackages = '{LyricMapImporter.FUSED_EVIDENCE_PACKAGES}' -split ' '"));
+                Assert.That(sh, Does.Contain($"FUSED_PACKAGES='{LyricMapImporter.FUSED_EVIDENCE_PACKAGES}'"));
+                Assert.That(ps1, Does.Contain("& $uvExe pip install --python $py $fusedPackages"));
+                Assert.That(sh, Does.Contain("\"$UV\" pip install --python \"$PY\" $FUSED_PACKAGES"));
+                Assert.That(ps1, Does.Contain("align_lyrics.qmul_weights_path()"));
+                Assert.That(sh, Does.Contain("align_lyrics.qmul_weights_path()"));
+                Assert.That(ps1, Does.Contain("[switch]$Update"));
+                Assert.That(sh, Does.Contain("--update) UPDATE=1 ;;"));
+
+                Assert.That(LyricMapImporter.ALIGNER_IMPORTS, Does.Not.Contain("phonemizer").And.Not.Contain("espeakng"));
+                Assert.That(LyricMapImporter.ALIGNER_PACKAGES, Does.Not.Contain("phonemizer").And.Not.Contain("espeakng"));
+            });
+        }
+
+        /// <summary>Fake setup scripts that record the arguments they were run with (into setup-args.txt) and exit with <paramref name="exitCode"/>.</summary>
+        private static void writeRecordingSetupScripts(string lab, int exitCode)
+        {
+            File.WriteAllText(Path.Combine(lab, "setup.ps1"), $"Set-Content -Path 'setup-args.txt' -Value ($args -join ' ')\nexit {exitCode}\n");
+            File.WriteAllText(Path.Combine(lab, "setup.sh"), $"echo \"$*\" > setup-args.txt\nexit {exitCode}\n");
+        }
+
+        /// <summary>A completed install: a venv python whose imports load, its setup sentinel, and a canary in the venv.</summary>
+        private string makeCompletedInstall()
+        {
+            string lab = makeLab();
+            writeFakePython(lab, importsLoad: true);
+            File.WriteAllText(LyricMapImporter.SetupSentinelFor(lab), "python=3.11");
+            File.WriteAllText(Path.Combine(lab, ".venv", "canary.txt"), "the existing environment");
+            return lab;
+        }
+
+        [Test]
+        public async Task BootstrapRunsTheSetupUpdateOnACompletedInstallWhenAsked()
+        {
+            // The Update button (InstallAsync) copies new scripts over a completed install. Before
+            // backlog 411 the bootstrap then returned at once, so a venv never got the packages the
+            // new aligner added. With updateExisting it runs the setup's update mode, in place.
+            string lab = makeCompletedInstall();
+            writeRecordingSetupScripts(lab, exitCode: 0);
+            string argsFile = Path.Combine(lab, "setup-args.txt");
+
+            var plain = await LyricMapImporter.BootstrapEnvironmentAsync(lab, _ => { }, CancellationToken.None).ConfigureAwait(false);
+
+            Assert.That(plain.Success, Is.True, plain.Error);
+            Assert.That(File.Exists(argsFile), Is.False, "without updateExisting a completed install is left as it stands");
+
+            var lines = new List<string>();
+            var updated = await LyricMapImporter.BootstrapEnvironmentAsync(
+                lab, line => { lock (lines) lines.Add(line); }, CancellationToken.None, "cpu", updateExisting: true).ConfigureAwait(false);
+
+            Assert.That(updated.Success, Is.True, updated.Error);
+            Assert.That(File.Exists(argsFile), Is.True, "the setup script did not run");
+            Assert.That(File.ReadAllText(argsFile).Trim(), Does.EndWith(OperatingSystem.IsWindows() ? "-Update" : "--update"));
+            Assert.That(File.Exists(Path.Combine(lab, ".venv", "canary.txt")), Is.True, "an update must not touch the venv");
+            Assert.That(LyricMapImporter.EnvironmentReady(lab), Is.True);
+        }
+
+        [Test]
+        public async Task BootstrapUpdatesAnAdoptedSentinelLessVenvToo()
+        {
+            // A pre-sentinel install is adopted in place and then updated, since it is just as
+            // likely to lack the new packages.
+            string lab = makeLab();
+            writeFakePython(lab, importsLoad: true);
+            writeRecordingSetupScripts(lab, exitCode: 0);
+
+            var result = await LyricMapImporter.BootstrapEnvironmentAsync(lab, _ => { }, CancellationToken.None, "cpu", updateExisting: true).ConfigureAwait(false);
+
+            Assert.That(result.Success, Is.True, result.Error);
+            Assert.That(LyricMapImporter.EnvironmentReady(lab), Is.True);
+            Assert.That(File.ReadAllText(Path.Combine(lab, "setup-args.txt")).Trim(), Does.EndWith(OperatingSystem.IsWindows() ? "-Update" : "--update"));
+        }
+
+        [Test]
+        public async Task AFailedSetupUpdateKeepsTheInstallAndSaysSo()
+        {
+            // The install still works without the new packages (the aligner runs its version 9
+            // path), so a failed update is said and logged, never returned as a failed install.
+            string lab = makeCompletedInstall();
+            writeRecordingSetupScripts(lab, exitCode: 1);
+
+            var lines = new List<string>();
+            var result = await LyricMapImporter.BootstrapEnvironmentAsync(
+                lab, line => { lock (lines) lines.Add(line); }, CancellationToken.None, "cpu", updateExisting: true).ConfigureAwait(false);
+
+            Assert.That(result.Success, Is.True, result.Error);
+            Assert.That(LyricMapImporter.EnvironmentReady(lab), Is.True);
+            Assert.That(File.Exists(Path.Combine(lab, ".venv", "canary.txt")), Is.True);
+            lock (lines)
+                Assert.That(lines, Has.Some.EqualTo(LyricMapImporter.ENVIRONMENT_UPDATE_INCOMPLETE));
+        }
+
+        [Test]
+        public async Task ShippedSetupScriptUpdateAgainstAFakeUvInstallsTheNewPackagesInPlace()
+        {
+            // The real vendored setup script in its update mode, driven by the game's bootstrap
+            // against a fake uv that logs every call (nothing is downloaded): the required set and then
+            // the version 10 pair, installed into the existing venv; no venv created, torch untouched.
+            string shipped = vendoredLyricLab();
+            string lab = makeCompletedInstall();
+            File.Copy(Path.Combine(shipped, LyricMapImporter.SetupScriptName), Path.Combine(lab, LyricMapImporter.SetupScriptName));
+            string sentinelBefore = File.ReadAllText(LyricMapImporter.SetupSentinelFor(lab));
+
+            string fakeUv = Path.Combine(tempRoot, "fakeuv");
+            Directory.CreateDirectory(fakeUv);
+            string path;
+
+            if (OperatingSystem.IsWindows())
+            {
+                // The redirect comes first so a trailing digit in the arguments cannot read as a handle.
+                File.WriteAllText(Path.Combine(fakeUv, "uv.cmd"), string.Join("\r\n", "@echo off", ">>uv-calls.txt echo %*", "exit /b 0") + "\r\n");
+                path = string.Join(Path.PathSeparator, fakeUv, Environment.SystemDirectory, Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0"));
+            }
+            else
+            {
+                string uv = Path.Combine(fakeUv, "uv");
+                File.WriteAllText(uv, "#!/bin/sh\necho \"$*\" >> uv-calls.txt\nexit 0\n");
+                File.SetUnixFileMode(uv, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                path = string.Join(Path.PathSeparator, fakeUv, "/usr/bin", "/bin");
+            }
+
+            string? originalPath = Environment.GetEnvironmentVariable("PATH");
+            var lines = new List<string>();
+            LyricImportResult result;
+
+            try
+            {
+                Environment.SetEnvironmentVariable("PATH", path);
+                result = await LyricMapImporter.BootstrapEnvironmentAsync(
+                    lab, line => { lock (lines) lines.Add(line); }, CancellationToken.None, "cpu", updateExisting: true).ConfigureAwait(false);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("PATH", originalPath);
+            }
+
+            string callsFile = Path.Combine(lab, "uv-calls.txt");
+            // The script's own "is this uv usable" probe (--version) is not an install.
+            string[] calls = File.Exists(callsFile)
+                ? File.ReadAllLines(callsFile).Select(l => l.Trim()).Where(l => l.Length > 0 && l != "--version").ToArray()
+                : Array.Empty<string>();
+
+            lock (lines)
+            {
+                Assert.Multiple(() =>
+                {
+                    Assert.That(result.Success, Is.True, $"{result.Error}\n{string.Join("\n", lines)}");
+                    Assert.That(lines, Has.Some.Contains("lyriclab environment updated"));
+                    Assert.That(lines, Has.None.EqualTo(LyricMapImporter.ENVIRONMENT_UPDATE_INCOMPLETE));
+                    Assert.That(lines, Has.Some.Contains("fetching the fused-evidence weights"));
+                    Assert.That(calls, Has.Length.EqualTo(2), string.Join("\n", calls));
+                    Assert.That(calls.ElementAtOrDefault(0), Does.StartWith("pip install").And.EndWith(LyricMapImporter.ALIGNER_PACKAGES));
+                    Assert.That(calls.ElementAtOrDefault(1), Does.StartWith("pip install").And.EndWith(" " + LyricMapImporter.FUSED_EVIDENCE_PACKAGES));
+                    Assert.That(calls, Has.None.Contains("torch"));
+                    Assert.That(File.Exists(Path.Combine(lab, ".venv", "canary.txt")), Is.True);
+                    Assert.That(File.ReadAllText(LyricMapImporter.SetupSentinelFor(lab)), Is.EqualTo(sentinelBefore));
+                });
+            }
+        }
+
         [Test]
         public async Task ImportWithABrokenSentinelLessVenvPointsAtRepairAndDeletesNothing()
         {
@@ -1518,6 +1776,546 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
 
             Assert.That(other.Error, Does.StartWith("aligner exited with code 2"));
             Assert.That(LyricMapImporter.EnvironmentReady(lab), Is.True);
+        }
+
+        /// <summary>
+        /// Version 10 logs a WARNING when its fused path falls back for want of an OPTIONAL package,
+        /// and the line names the missing module. An unrelated failure later in the same run, with
+        /// that line still in the tail, must not read as a broken install (which would withdraw the
+        /// sentinel of a venv whose required imports load); a real import failure still does.
+        /// </summary>
+        [Test]
+        public void AFusedEvidenceFallbackWarningIsNotAMissingPackage()
+        {
+            const string warning = "[12:40:02] WARNING: fused evidence failed (RuntimeError: a dependency is missing (No module named 'phonemizer'); "
+                                   + "install phonemizer and espeakng-loader); keeping the version 9 path";
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(LyricMapImporter.IsMissingPackageFailure($"{warning} | Traceback (most recent call last): | OSError: [Errno 28] No space left on device"), Is.False);
+                Assert.That(LyricMapImporter.IsMissingPackageFailure("WARNING: something optional raised ImportError, carrying on"), Is.False);
+                Assert.That(LyricMapImporter.IsMissingPackageFailure($"{warning} | Traceback (most recent call last): | ModuleNotFoundError: No module named 'torch'"), Is.True);
+                Assert.That(LyricMapImporter.IsMissingPackageFailure("Traceback (most recent call last):\nModuleNotFoundError: No module named 'torch'"), Is.True);
+                Assert.That(LyricMapImporter.IsMissingPackageFailure("ImportError: DLL load failed while importing _C"), Is.True);
+            });
+        }
+
+        #endregion
+
+        #region Aligner version gate (backlog 410)
+
+        private const string fully_stamped_lyrics = "[00:01.00] hello\n[00:02.00] world\n";
+
+        /// <summary>
+        /// A completed install (venv python and setup sentinel) whose script declares
+        /// <paramref name="version"/>, null for a version-1 script with no constant. Its python is
+        /// the do-nothing fake, so a run that DID happen produces no timing and the ladder falls back
+        /// to the line stamps, which is what makes a refusal distinguishable from a run.
+        /// </summary>
+        private string makeInstalledLab(string? version)
+        {
+            string lab = makeLab();
+            File.WriteAllText(Path.Combine(lab, "align_lyrics.py"), version == null ? "# predates the constant\n" : $"ALIGNER_VERSION = \"{version}\"\n");
+            writeFakePython(lab, importsLoad: true);
+            File.WriteAllText(LyricMapImporter.SetupSentinelFor(lab), "python=3.11\n");
+            Assert.That(LyricMapImporter.EnvironmentReady(lab), Is.True);
+            return lab;
+        }
+
+        private string writeFakeAudio()
+        {
+            string audioPath = Path.Combine(tempRoot, "Some Artist - Some Song.mp3");
+            File.WriteAllText(audioPath, "fake audio");
+            return audioPath;
+        }
+
+        [TestCase("8", "9", AlignerVersionStatus.Older)]
+        [TestCase(null, "9", AlignerVersionStatus.Older)]
+        [TestCase("10", "9", AlignerVersionStatus.Newer)]
+        [TestCase("9", "10", AlignerVersionStatus.Older)]
+        [TestCase("9", "9", AlignerVersionStatus.Matches)]
+        [TestCase(null, "1", AlignerVersionStatus.Matches)]
+        [TestCase("9b", "9", AlignerVersionStatus.Different)]
+        [TestCase("9b", "9b", AlignerVersionStatus.Matches)]
+        [TestCase("8", null, AlignerVersionStatus.Matches)]
+        public void VersionRuleRefusesAnyMismatch(string? installed, string? shipped, AlignerVersionStatus expected)
+        {
+            Assert.That(LocalAlignerVersion.Compare(installed, shipped), Is.EqualTo(expected));
+            Assert.That(LocalAlignerVersion.StatusOf(false, installed, shipped), Is.EqualTo(AlignerVersionStatus.Matches), "nothing installed is never a mismatch");
+        }
+
+        /// <summary>
+        /// The guard every import entry point goes through: an installed aligner of any version but the
+        /// required one is refused with the advice, and never run (no "aligner unavailable ... trying
+        /// next option" line, which a run of the fake python would produce on its way to the line
+        /// stamps), and the import does NOT quietly fall back to those stamps.
+        /// </summary>
+        [TestCase("8", "your local auto-aligner is out of date (v8, this version of type!beat needs v9). "
+                       + "Update it in Settings > Experimental > Lyric timing to use automatic alignment.")]
+        [TestCase(null, "your local auto-aligner is out of date (v1, this version of type!beat needs v9). "
+                        + "Update it in Settings > Experimental > Lyric timing to use automatic alignment.")]
+        [TestCase("10", "your local auto-aligner is from a newer version of type!beat (v10, this version of type!beat needs v9). "
+                        + "Reinstall it in Settings > Experimental > Lyric timing to use automatic alignment.")]
+        public async Task MismatchedAlignerIsRefusedAndNeverRun(string? installedVersion, string expectedError)
+        {
+            string lab = makeInstalledLab(installedVersion);
+            string audioPath = writeFakeAudio();
+
+            var lines = new List<string>();
+            var (result, timing) = await LyricMapImporter.ProduceTimingJsonAsync(
+                audioPath, fully_stamped_lyrics, "A", "B", lab, Array.Empty<string>(),
+                line => { lock (lines) lines.Add(line); }, CancellationToken.None,
+                useAutomaticAlignment: true, requiredAlignerVersion: "9").ConfigureAwait(false);
+
+            Assert.That(result.Success, Is.False, "refused, not fallen back to the line stamps");
+            Assert.That(timing, Is.Null);
+            Assert.That(result.Error, Is.EqualTo(expectedError));
+
+            lock (lines)
+                Assert.That(lines, Has.None.Contains("trying next option"), "the aligner never ran");
+        }
+
+        /// <summary>
+        /// The packaging entry point refuses the same way with automatic alignment on, and with it off
+        /// imports exactly as before: the line-stamp path never consults the aligner, mismatched or not.
+        /// </summary>
+        [Test]
+        public async Task BuildOszRefusesAMismatchedAlignerOnlyWhenAlignmentIsOn()
+        {
+            string lab = makeInstalledLab("8");
+            string audioPath = writeFakeAudio();
+            string lyricsPath = Path.Combine(tempRoot, "lyrics.lrc");
+            File.WriteAllText(lyricsPath, fully_stamped_lyrics);
+
+            var lines = new List<string>();
+            var refused = await LyricMapImporter.BuildOszAsync(audioPath, lyricsPath, "Some Artist", "Some Song", lab, Array.Empty<string>(),
+                line => { lock (lines) lines.Add(line); }, CancellationToken.None, useAutomaticAlignment: true, requiredAlignerVersion: "9").ConfigureAwait(false);
+
+            Assert.That(refused.Success, Is.False);
+            Assert.That(refused.Error, Does.StartWith("your local auto-aligner is out of date (v8, this version of type!beat needs v9)"));
+            lock (lines)
+                Assert.That(lines, Has.None.Contains("trying next option"), "the aligner never ran");
+
+            var lineStamped = await LyricMapImporter.BuildOszAsync(audioPath, lyricsPath, "Some Artist", "Some Song", lab, Array.Empty<string>(),
+                _ => { }, CancellationToken.None, useAutomaticAlignment: false, requiredAlignerVersion: "9").ConfigureAwait(false);
+
+            Assert.That(lineStamped.Success, Is.True, lineStamped.Error);
+        }
+
+        /// <summary>
+        /// Lyrics that need no aligner (an enhanced LRC carries its own word stamps) import with
+        /// automatic alignment on even when the installed aligner mismatches: the refusal sits where
+        /// the aligner would run, not in front of the whole ladder.
+        /// </summary>
+        [Test]
+        public async Task WordStampedLyricsImportPastAMismatchedAligner()
+        {
+            string lab = makeInstalledLab("8");
+            string audioPath = writeFakeAudio();
+
+            var (result, timing) = await LyricMapImporter.ProduceTimingJsonAsync(
+                audioPath, enhanced_lyrics, "A", "B", lab, Array.Empty<string>(), _ => { }, CancellationToken.None,
+                useAutomaticAlignment: true, requiredAlignerVersion: "9").ConfigureAwait(false);
+
+            Assert.That(result.Success, Is.True, result.Error);
+            Assert.That(timing, Is.Not.Null);
+        }
+
+        [Test]
+        public void MatchingOrUnrequiredVersionIsNotRefused()
+        {
+            string lab = makeInstalledLab("9");
+
+            Assert.That(LyricMapImporter.AlignerVersionRefusal(lab, "9"), Is.Null);
+            Assert.That(LyricMapImporter.AlignerVersionRefusal(lab, null), Is.Null, "no required version checks nothing");
+            Assert.That(LyricMapImporter.AlignerVersionRefusal(lab, "10"), Does.StartWith("your local auto-aligner is out of date (v9, this version of type!beat needs v10)"));
+        }
+
+        #endregion
+
+        #region Isolated vocals without alignment (backlog 414)
+
+        private const string separate_only_version = "11";
+
+        /// <summary>
+        /// A stand-in for the <c>--separate-only</c> subprocess: records each start info's file name,
+        /// working directory, arguments and UTF-8 environment, then does what <c>behaviour</c>
+        /// says. "ok" writes a vocals.wav into the -o dir and exits 0 as the script does; "silent" exits
+        /// 0 having written nothing; "fail" exits 1 with a traceback tail; "throw" cannot start;
+        /// "cancel" fires <c>cancel</c> mid-run.
+        /// </summary>
+        private sealed class FakeSeparation
+        {
+            public readonly List<(string FileName, string WorkingDirectory, List<string> Args, string? Utf8)> Runs = new List<(string, string, List<string>, string?)>();
+
+            private readonly string behaviour;
+            private readonly CancellationTokenSource? cancel;
+
+            public FakeSeparation(string behaviour = "ok", CancellationTokenSource? cancel = null)
+            {
+                this.behaviour = behaviour;
+                this.cancel = cancel;
+            }
+
+            public Task<(int ExitCode, string Tail)> Run(System.Diagnostics.ProcessStartInfo psi, Action<string> progress, CancellationToken token)
+            {
+                var args = psi.ArgumentList.ToList();
+                Runs.Add((psi.FileName, psi.WorkingDirectory, args, psi.Environment.TryGetValue("PYTHONUTF8", out string? utf8) ? utf8 : null));
+
+                switch (behaviour)
+                {
+                    case "ok":
+                        string outDir = args[args.IndexOf("-o") + 1];
+                        Directory.CreateDirectory(outDir);
+                        File.WriteAllBytes(Path.Combine(outDir, VocalsStem.WAV_FILENAME), new byte[] { 0x52, 0x49, 0x46, 0x46 });
+                        progress("[12:00:00] separation: running demucs (htdemucs) on cpu ...");
+                        return Task.FromResult((0, string.Empty));
+
+                    case "silent":
+                        return Task.FromResult((0, string.Empty));
+
+                    case "fail":
+                        return Task.FromResult((1, "Traceback (most recent call last): | RuntimeError: demucs did not produce vocals.wav"));
+
+                    case "cancel":
+                        cancel!.Cancel();
+                        return Task.FromResult((int.MinValue, string.Empty));
+
+                    default:
+                        throw new System.ComponentModel.Win32Exception("The system cannot find the file specified.");
+                }
+            }
+        }
+
+        private string writeStampedLyrics()
+        {
+            string lyricsPath = Path.Combine(tempRoot, "lyrics.lrc");
+            File.WriteAllText(lyricsPath, fully_stamped_lyrics);
+            return lyricsPath;
+        }
+
+        private static bool carriesAStem(LyricImportResult result)
+        {
+            using var archive = ZipFile.OpenRead(result.OszPath!);
+            return archive.GetEntry(VocalsStem.WAV_FILENAME) != null || archive.GetEntry(VocalsStem.OGG_FILENAME) != null;
+        }
+
+        private static void deleteOszDir(LyricImportResult result)
+        {
+            try
+            {
+                if (result.OszPath != null)
+                    Directory.Delete(Path.GetDirectoryName(result.OszPath)!, true);
+            }
+            catch
+            {
+                // best effort
+            }
+        }
+
+        /// <summary>
+        /// A line-stamped import with automatic alignment off never aligns, so it never had a stem.
+        /// Asked to isolate the vocals with a usable version 11 aligner installed, it runs the script's
+        /// --separate-only mode with the venv's python in UTF-8 and packages the stem it wrote.
+        /// </summary>
+        [Test]
+        public async Task ALineStampedImportSeparatesTheVocalsWhenAsked()
+        {
+            string lab = makeInstalledLab(separate_only_version);
+            string audioPath = writeFakeAudio();
+            var separation = new FakeSeparation();
+            var lines = new List<string>();
+
+            var result = await LyricMapImporter.BuildOszAsync(audioPath, writeStampedLyrics(), "Some Artist", "Some Song", lab, Array.Empty<string>(),
+                line => { lock (lines) lines.Add(line); }, CancellationToken.None, useAutomaticAlignment: false, requiredAlignerVersion: separate_only_version,
+                isolateVocals: true, vocalsSeparationRunner: separation.Run).ConfigureAwait(false);
+
+            try
+            {
+                Assert.That(result.Success, Is.True, result.Error);
+                Assert.That(separation.Runs, Has.Count.EqualTo(1));
+
+                var run = separation.Runs.Single();
+                string expectedOut = Path.Combine(lab, "out", "typebeat_vocals_Some Artist - Some Song");
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(run.FileName, Is.EqualTo(LyricMapImporter.PythonExeFor(lab)));
+                    Assert.That(run.WorkingDirectory, Is.EqualTo(lab));
+                    Assert.That(run.Args, Is.EqualTo(new[] { "align_lyrics.py", audioPath, "--separate-only", "-o", expectedOut }));
+                    Assert.That(run.Utf8, Is.EqualTo("1"), "demucs prints the track's name, which must not kill a non-Latin title");
+                    Assert.That(carriesAStem(result), Is.True, "the separated stem is packaged");
+                    Assert.That(result.Notice, Is.Null);
+                });
+
+                lock (lines)
+                {
+                    Assert.That(lines, Has.Member(LyricMapImporter.SEPARATING_VOCALS_PROGRESS));
+                    Assert.That(lines.IndexOf(LyricMapImporter.SEPARATING_VOCALS_PROGRESS), Is.LessThan(lines.IndexOf("packaging map")), "separated before packaging");
+                }
+            }
+            finally
+            {
+                deleteOszDir(result);
+            }
+        }
+
+        [Test]
+        public void SeparateOnlyArgumentsCarryTheGpuDevice()
+        {
+            string lab = makeInstalledLab(separate_only_version);
+            File.WriteAllText(Path.Combine(lab, LyricMapImporter.DEVICE_MARKER_FILE), "cuda\n");
+
+            Assert.That(LyricMapImporter.SeparateOnlyArguments(lab, "song.mp3", "out"),
+                Is.EqualTo(new[] { "align_lyrics.py", "song.mp3", "--separate-only", "-o", "out", "--device", "cuda" }));
+        }
+
+        [Test]
+        public async Task IsolationOffNeverSeparates()
+        {
+            string lab = makeInstalledLab(separate_only_version);
+            var separation = new FakeSeparation();
+
+            var result = await LyricMapImporter.BuildOszAsync(writeFakeAudio(), writeStampedLyrics(), "Some Artist", "Some Song", lab, Array.Empty<string>(),
+                _ => { }, CancellationToken.None, useAutomaticAlignment: false, requiredAlignerVersion: separate_only_version,
+                isolateVocals: false, vocalsSeparationRunner: separation.Run).ConfigureAwait(false);
+
+            try
+            {
+                Assert.That(result.Success, Is.True, result.Error);
+                Assert.That(separation.Runs, Is.Empty);
+                Assert.That(carriesAStem(result), Is.False);
+                Assert.That(result.Notice, Is.Null);
+            }
+            finally
+            {
+                deleteOszDir(result);
+            }
+        }
+
+        /// <summary>
+        /// The other imports that never align: a blank map (audio only) and a word-stamped LRC (which
+        /// short-circuits the ladder even with automatic alignment on) separate too.
+        /// </summary>
+        [TestCase(null)]
+        [TestCase(enhanced_lyrics)]
+        public async Task BlankAndWordStampedImportsSeparateTooWhenAsked(string? lyrics)
+        {
+            string lab = makeInstalledLab(separate_only_version);
+            string? lyricsPath = null;
+
+            if (lyrics != null)
+            {
+                lyricsPath = Path.Combine(tempRoot, "words.lrc");
+                File.WriteAllText(lyricsPath, lyrics);
+            }
+
+            var separation = new FakeSeparation();
+
+            var result = await LyricMapImporter.BuildOszAsync(writeFakeAudio(), lyricsPath, "Some Artist", "Some Song", lab, Array.Empty<string>(),
+                _ => { }, CancellationToken.None, useAutomaticAlignment: true, requiredAlignerVersion: separate_only_version,
+                isolateVocals: true, vocalsSeparationRunner: separation.Run).ConfigureAwait(false);
+
+            try
+            {
+                Assert.That(result.Success, Is.True, result.Error);
+                Assert.That(separation.Runs, Has.Count.EqualTo(1));
+                Assert.That(carriesAStem(result), Is.True);
+            }
+            finally
+            {
+                deleteOszDir(result);
+            }
+        }
+
+        /// <summary>The server aligner sends no stem, so a usable local aligner separates one after it.</summary>
+        [Test]
+        public async Task AServerAlignedImportSeparatesLocallyWhenItCan()
+        {
+            string lab = makeInstalledLab(separate_only_version);
+            var separation = new FakeSeparation();
+            const string server_timing = "{\"version\":2,\"song_end_ms\":8000,\"lines\":[{\"text\":\"hello world\",\"start_ms\":1000,\"end_ms\":3000}]}";
+
+            var result = await LyricMapImporter.BuildOszAsync(writeFakeAudio(), writeStampedLyrics(), "Some Artist", "Some Song", lab, Array.Empty<string>(),
+                _ => { }, CancellationToken.None, useAutomaticAlignment: true, requiredAlignerVersion: separate_only_version,
+                remoteAlign: (_, _, _) => Task.FromResult(RemoteAlignOutcome.Ok(server_timing)),
+                isolateVocals: true, vocalsSeparationRunner: separation.Run).ConfigureAwait(false);
+
+            try
+            {
+                Assert.That(result.Success, Is.True, result.Error);
+                Assert.That(separation.Runs, Has.Count.EqualTo(1));
+                Assert.That(carriesAStem(result), Is.True);
+            }
+            finally
+            {
+                deleteOszDir(result);
+            }
+        }
+
+        /// <summary>
+        /// Without a usable local aligner (an older one without --separate-only, a version this build
+        /// does not ship, none at all) the separation never runs and the import still succeeds, its
+        /// notice saying why the map has no stem.
+        /// </summary>
+        [TestCase("10", "10", "vocals not isolated: the local auto-aligner is v10, which cannot isolate the vocals on its own (v11 or newer needed). "
+                              + "Update it in Settings > Experimental > Lyric timing.")]
+        [TestCase("9", "11", "vocals not isolated: your local auto-aligner is out of date (v9, this version of type!beat needs v11). "
+                             + "Update it in Settings > Experimental > Lyric timing to use automatic alignment.")]
+        [TestCase(null, "11", "vocals not isolated: " + LyricMapImporter.VOCALS_NEED_THE_ALIGNER)]
+        public async Task WithoutAUsableAlignerTheImportSucceedsWithoutAStem(string? installedVersion, string requiredVersion, string expectedNotice)
+        {
+            string? lab = installedVersion == null ? null : makeInstalledLab(installedVersion);
+            var separation = new FakeSeparation();
+            var lines = new List<string>();
+
+            var result = await LyricMapImporter.BuildOszAsync(writeFakeAudio(), writeStampedLyrics(), "Some Artist", "Some Song", lab, Array.Empty<string>(),
+                line => { lock (lines) lines.Add(line); }, CancellationToken.None, useAutomaticAlignment: false, requiredAlignerVersion: requiredVersion,
+                isolateVocals: true, vocalsSeparationRunner: separation.Run).ConfigureAwait(false);
+
+            try
+            {
+                Assert.That(result.Success, Is.True, result.Error);
+                Assert.That(separation.Runs, Is.Empty, "never run");
+                Assert.That(carriesAStem(result), Is.False);
+                Assert.That(result.Notice, Is.EqualTo(expectedNotice));
+
+                lock (lines)
+                    Assert.That(lines, Has.Member(expectedNotice), "said as the import goes too");
+            }
+            finally
+            {
+                deleteOszDir(result);
+            }
+        }
+
+        [Test]
+        public void AnIncompleteInstallIsNotUsedForIsolation()
+        {
+            string lab = makeLab();
+            File.WriteAllText(Path.Combine(lab, "align_lyrics.py"), $"ALIGNER_VERSION = \"{separate_only_version}\"\n");
+            writeFakePython(lab, importsLoad: true);
+
+            Assert.That(LyricMapImporter.VocalsIsolationRefusal(lab, separate_only_version), Is.EqualTo(LyricMapImporter.VOCALS_NEED_A_REPAIR));
+            File.WriteAllText(LyricMapImporter.SetupSentinelFor(lab), "python=3.11\n");
+            Assert.That(LyricMapImporter.VocalsIsolationRefusal(lab, separate_only_version), Is.Null);
+            Assert.That(LyricMapImporter.VocalsIsolationRefusal(lab, null), Is.Null, "no required version checks only the flag's own version");
+        }
+
+        /// <summary>A separation that fails, writes nothing, or cannot start is never fatal: the map packages without a stem and says why.</summary>
+        [TestCase("fail", "vocals not isolated: the separation failed (RuntimeError: demucs did not produce vocals.wav).")]
+        [TestCase("silent", "vocals not isolated: the separation wrote no vocals.wav.")]
+        [TestCase("throw", "vocals not isolated: the separation could not run (The system cannot find the file specified.).")]
+        public async Task AFailedSeparationImportsWithoutAStem(string behaviour, string expectedNotice)
+        {
+            string lab = makeInstalledLab(separate_only_version);
+            var separation = new FakeSeparation(behaviour);
+
+            var result = await LyricMapImporter.BuildOszAsync(writeFakeAudio(), writeStampedLyrics(), "Some Artist", "Some Song", lab, Array.Empty<string>(),
+                _ => { }, CancellationToken.None, useAutomaticAlignment: false, requiredAlignerVersion: separate_only_version,
+                isolateVocals: true, vocalsSeparationRunner: separation.Run).ConfigureAwait(false);
+
+            try
+            {
+                Assert.That(result.Success, Is.True, result.Error);
+                Assert.That(separation.Runs, Has.Count.EqualTo(1));
+                Assert.That(carriesAStem(result), Is.False);
+                Assert.That(result.Notice, Is.EqualTo(expectedNotice));
+            }
+            finally
+            {
+                deleteOszDir(result);
+            }
+        }
+
+        /// <summary>A stem left in the out dir by an earlier same-named import is never packaged as this one's.</summary>
+        [Test]
+        public async Task AStaleStemIsNotPackaged()
+        {
+            string lab = makeInstalledLab(separate_only_version);
+            string outDir = Path.Combine(lab, "out", "typebeat_vocals_Some Artist - Some Song");
+            Directory.CreateDirectory(outDir);
+            File.WriteAllBytes(Path.Combine(outDir, VocalsStem.WAV_FILENAME), new byte[] { 1, 2, 3 });
+
+            var result = await LyricMapImporter.BuildOszAsync(writeFakeAudio(), writeStampedLyrics(), "Some Artist", "Some Song", lab, Array.Empty<string>(),
+                _ => { }, CancellationToken.None, useAutomaticAlignment: false, requiredAlignerVersion: separate_only_version,
+                isolateVocals: true, vocalsSeparationRunner: new FakeSeparation("silent").Run).ConfigureAwait(false);
+
+            try
+            {
+                Assert.That(result.Success, Is.True, result.Error);
+                Assert.That(carriesAStem(result), Is.False);
+            }
+            finally
+            {
+                deleteOszDir(result);
+            }
+        }
+
+        /// <summary>Esc during the separation cancels the whole import, as it does during an alignment.</summary>
+        [Test]
+        public async Task CancellingDuringTheSeparationCancelsTheImport()
+        {
+            string lab = makeInstalledLab(separate_only_version);
+            using var cancellation = new CancellationTokenSource();
+
+            var result = await LyricMapImporter.BuildOszAsync(writeFakeAudio(), writeStampedLyrics(), "Some Artist", "Some Song", lab, Array.Empty<string>(),
+                _ => { }, cancellation.Token, useAutomaticAlignment: false, requiredAlignerVersion: separate_only_version,
+                isolateVocals: true, vocalsSeparationRunner: new FakeSeparation("cancel", cancellation).Run).ConfigureAwait(false);
+
+            Assert.That(result.Success, Is.False);
+            Assert.That(result.Error, Is.EqualTo("import cancelled"));
+        }
+
+        /// <summary>
+        /// A local alignment run already wrote the stem (backlog 392): it is packaged as it stands and
+        /// the vocals are not separated a second time, whatever the isolate choice says.
+        /// </summary>
+        [Test]
+        public async Task AnAlignmentRunsOwnStemIsNotSeparatedAgain()
+        {
+            string lab = makeInstalledLab(separate_only_version);
+            string producedStem = Path.Combine(tempRoot, VocalsStem.WAV_FILENAME);
+            File.WriteAllBytes(producedStem, new byte[] { 0x52, 0x49, 0x46, 0x46 });
+            string oszDir = Path.Combine(tempRoot, "osz");
+            Directory.CreateDirectory(oszDir);
+            var separation = new FakeSeparation();
+
+            (string? stem, string? notice, bool cancelled) = await LyricMapImporter.VocalsStemForPackageAsync(producedStem, true, writeFakeAudio(), "A", "B", oszDir,
+                lab, Array.Empty<string>(), separate_only_version, _ => { }, CancellationToken.None, separation.Run).ConfigureAwait(false);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(separation.Runs, Is.Empty);
+                Assert.That(stem, Is.Not.Null);
+                Assert.That(VocalsStem.IsStemFileName(Path.GetFileName(stem)), Is.True, "the produced stem, or its Ogg encoding");
+                Assert.That(notice, Is.Null);
+                Assert.That(cancelled, Is.False);
+            });
+        }
+
+        [Test]
+        public void ShippedAlignerSeparatesOnly()
+        {
+            string? vendored = null;
+
+            for (var dir = new DirectoryInfo(TestContext.CurrentContext.TestDirectory); dir != null && vendored == null; dir = dir.Parent)
+            {
+                if (File.Exists(Path.Combine(dir.FullName, "lyriclab", "align_lyrics.py")))
+                    vendored = Path.Combine(dir.FullName, "lyriclab", "align_lyrics.py");
+            }
+
+            Assert.That(vendored, Is.Not.Null);
+
+            string script = File.ReadAllText(vendored!);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(script, Does.Contain("\"--separate-only\""));
+                Assert.That(script, Does.Contain("def separate_only("));
+                Assert.That(script, Does.Contain("persist(out_dir, stem, wav16)"), "the stem is persisted the way an alignment run persists it");
+                Assert.That(LyricMapImporter.AlignerSeparatesOnly(Path.GetDirectoryName(vendored!)!), Is.True);
+            });
         }
 
         #endregion
@@ -1711,8 +2509,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             {
                 Assert.That(body, Does.Contain("env[\"PYTHONUTF8\"] = \"1\""));
                 Assert.That(body, Does.Contain("env[\"PYTHONIOENCODING\"] = \"utf-8\""));
-                Assert.That(script, Does.Contain($"ALIGNER_VERSION = \"{LyricMapImporter.PERSISTS_VOCALS_STEM_ALIGNER_VERSION}\""),
-                    "installed older copies must be offered the update, and the stem needs version 9");
+                Assert.That(LyricMapImporter.AlignerPersistsVocalsStem(Path.GetDirectoryName(vendored!)!), Is.True,
+                    "installed older copies must be offered the update, and the stem needs version 9 or newer");
             });
         }
 

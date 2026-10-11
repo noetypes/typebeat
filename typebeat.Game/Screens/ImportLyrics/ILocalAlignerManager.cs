@@ -11,8 +11,8 @@ namespace typebeat.Game.Screens.ImportLyrics
 {
     /// <summary>
     /// Shell-side seam for managing the LOCAL lyriclab auto-aligner (the AI that times lyrics
-    /// word-by-word on the player's own machine, and, since the server-side aligner was retired, the
-    /// only automatic timing path there is). The concrete implementation lives in the ruleset beside
+    /// word-by-word on the player's own machine; a player who cannot run it can opt in to the server
+    /// aligner on the import screen instead, backlog 413). The concrete implementation lives in the ruleset beside
     /// <see cref="ILyricMapImporter"/>; typebeat.Desktop caches it so the first-run setup screen and
     /// the settings section can drive installs.
     /// </summary>
@@ -48,10 +48,13 @@ namespace typebeat.Game.Screens.ImportLyrics
         string? ShippedVersion { get; }
 
         /// <summary>
-        /// True when an installed aligner is older than the one this build ships, so a reinstall
-        /// (which refreshes the scripts and keeps the multi-GB environment) would change results.
+        /// How the installed aligner's version stands against the shipped one (backlog 410). Anything
+        /// but <see cref="AlignerVersionStatus.Matches"/> blocks automatic alignment until the player
+        /// presses <see cref="InstallAsync"/>'s button, which refreshes the scripts and keeps the
+        /// multi-GB environment. Derived, never stored, so every implementation shares the one rule
+        /// in <see cref="LocalAlignerVersion.StatusOf"/>.
         /// </summary>
-        bool UpdateAvailable { get; }
+        AlignerVersionStatus VersionStatus => LocalAlignerVersion.StatusOf(IsInstalled, InstalledVersion, ShippedVersion);
 
         /// <summary>
         /// Installs (or repairs) the local aligner: copies the shipped component into the game's

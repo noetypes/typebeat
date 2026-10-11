@@ -28,26 +28,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
         LyricLabPath,
 
         /// <summary>
-        /// Whether the locally installed lyriclab auto-aligner is used for imports. On by default:
-        /// when an installed environment exists it times the words; when off (or nothing is
-        /// installed) imports fall back to the lyrics' own [mm:ss.xx] line stamps, which since the
-        /// server-side aligner was retired is the ONLY other source of timing. It never triggers the
-        /// install itself, which stays an explicit action (the first-run prompt and the Settings
-        /// button).
-        ///
-        /// <para>DORMANT since backlog 381: the switch is no longer offered in Settings (see
-        /// <see cref="TypeBeatRulesetConfigManager.LOCAL_ALIGNER_TOGGLE_SURFACED"/>). With the
-        /// server aligner gone the local one is the only auto-align path, so INSTALLING it is the
-        /// opt-in and uninstalling it is the opt-out, and the import path does not read this value
-        /// while the switch is hidden. The key, its default and every stored row are kept untouched
-        /// (a player who turned it off still has <c>False</c> on disk) so that a returning hosted
-        /// aligner, which would make "local or not" a real choice again, can surface the switch and
-        /// honour those rows exactly as they were left. Do not delete or rename the member: Realm
-        /// keys rows by member name.</para>
-        /// </summary>
-        LocalAlignerEnabled,
-
-        /// <summary>
         /// Rendering style (monkeytype's caret options) of the PLAYER's typing caret only. The sung
         /// playhead has its own <see cref="SungCaretStyle"/>, so the two heads can be shaped apart.
         ///
@@ -242,9 +222,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
         /// instead of thirty seconds at six threads, twice that on two). That is a cost a player
         /// should choose, not one the game should impose on everybody's first import.
         ///
-        /// <para>Only consulted when the aligner runs at all (it is installed, and, should
-        /// <see cref="LocalAlignerEnabled"/> ever be surfaced again, switched on), and it never
-        /// touches the install: the tier is a per-run flag of the same script, so both
+        /// <para>Only consulted when the LOCAL aligner runs at all (it is installed and the import
+        /// did not opt in to <see cref="UseServerAligner"/>, whose runs take the server's own default
+        /// tier), and it never touches the install: the tier is a per-run flag of the same script, so both
         /// tiers work off one environment. An installed aligner older than version 6 has no tiers,
         /// so the flag is then left out (see <c>LyricMapImporter.AlignerArguments</c>).</para>
         ///
@@ -285,7 +265,46 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
         ApproachBars,
 
         /// <summary>Records the one-time application of the revised indicator and pace defaults.</summary>
-        IndicatorDefaultsApplied
+        IndicatorDefaultsApplied,
+
+        /// <summary>Retired checkbox, retained only to migrate its saved choice to PaceBarReveal.</summary>
+        BuildPaceBarWithApproach,
+
+        /// <summary>Experimental per-letter underline colours for the awarded judgement. Display only.</summary>
+        JudgementColouredBars,
+
+        /// <summary>Build or colour in the pace underline as Approach bars arrive. Display only.</summary>
+        PaceBarReveal,
+
+        /// <summary>Experimental red screen edges warning of an approaching forced line change. Display only.</summary>
+        LinePushWarningEdges,
+
+        /// <summary>
+        /// The import screen's "use server aligner" choice (backlog 413), remembered so a player who
+        /// cannot run the local auto-aligner does not tick it again for every import. OFF by default:
+        /// the server aligner is an opt-in for players who cannot install the local one, never a
+        /// silent route for everybody's audio. Only the import screen reads or writes it, through
+        /// <c>ILyricMapImporter.ServerAlignerPreference</c>, and only while signed in: a guest sees the
+        /// choice greyed out and unticked without the stored value being touched.
+        ///
+        /// <para>This replaces the hidden "use local auto-aligner" switch (backlog 381), which was
+        /// deleted outright: a player opts IN to the server rather than out of the local aligner, so
+        /// the local one runs whenever it is installed and this is unticked. The deleted member's
+        /// stored rows (<c>LocalAlignerEnabled</c>) are orphaned and harmless: rows are looked up by
+        /// member name, and nothing asks for that name any more.</para>
+        /// </summary>
+        UseServerAligner,
+
+        /// <summary>
+        /// The import screen's "isolate vocals" choice (backlog 414), remembered between imports. ON
+        /// by default (the owner's call): an import that never runs automatic alignment (line or word
+        /// stamps, a TTML, a blank map, the server aligner) then runs the local aligner's
+        /// separate-only mode so the editor's vocals waveform has a stem. Only the import screen reads
+        /// or writes it, through <c>ILyricMapImporter.IsolateVocalsPreference</c>, and only from the
+        /// player's own clicks: the screen greying the choice out (no usable local aligner) or showing
+        /// it ticked under local automatic alignment never writes it.
+        /// </summary>
+        IsolateVocalsOnImport,
     }
 
     /// <summary>
@@ -351,6 +370,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
 
         [Description("Map-relative")]
         MapRelative,
+    }
+
+    public enum PaceBarRevealMode
+    {
+        [Description("Off")]
+        Off,
+
+        [Description("Build pace bar")]
+        Build,
+
+        [Description("Colour in pace bar")]
+        ColourIn,
     }
 
     /// <summary>How the active Great window is drawn over lyric text.</summary>
@@ -424,21 +455,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
         /// </summary>
         public const CaretStyle DEFAULT_SUNG_CARET_STYLE = CaretStyle.Line;
 
-        /// <summary>
-        /// Whether Settings &gt; Experimental offers the <see cref="TypeBeatRulesetSetting.LocalAlignerEnabled"/>
-        /// switch, and with it whether the import path honours its stored value. One flag for both on
-        /// purpose (backlog 381): a stored <c>False</c> the player can no longer see or change would be
-        /// an unreachable trap, an installed aligner that silently never runs while the failure copy
-        /// tells them to install it. So while the switch is hidden the INSTALL is the opt-in and the
-        /// stored value is ignored (not rewritten); setting this back to true restores the row and
-        /// re-honours every stored choice as it was left. Read through default parameters
-        /// (<c>LyricMapImportService.LocalAlignerEnabled</c>,
-        /// <c>TypeBeatExperimentalSettingsSubsection.BuildControls</c>) so a test can pin both arms.
-        /// </summary>
-        public const bool LOCAL_ALIGNER_TOGGLE_SURFACED = false;
-
         public TypeBeatRulesetConfigManager(SettingsStore? settings, RulesetInfo ruleset, int? variant = null)
-            : base(migrateIndicatorDefaults(migratePaceColourMode(settings, ruleset, variant ?? 0), ruleset, variant ?? 0), ruleset, variant)
+            : base(migratePaceBarReveal(migrateIndicatorDefaults(migratePaceColourMode(settings, ruleset, variant ?? 0), ruleset, variant ?? 0), ruleset, variant ?? 0), ruleset, variant)
         {
             approachBarsBindable = GetBindable<bool>(TypeBeatRulesetSetting.ApproachBars);
             paceColourGradientBindable = GetBindable<float>(TypeBeatRulesetSetting.PaceColourGradient);
@@ -533,13 +551,39 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
             return settings;
         }
 
+        // The new row is the migration marker: once it exists, later choices survive restarts
+        // even if an older build changes the retired checkbox again.
+        private static SettingsStore? migratePaceBarReveal(SettingsStore? settings, RulesetInfo ruleset, int variant)
+        {
+            if (settings == null)
+                return null;
+
+            string rulesetName = ruleset.ShortName;
+            string modeKey = nameof(TypeBeatRulesetSetting.PaceBarReveal);
+            string legacyKey = nameof(TypeBeatRulesetSetting.BuildPaceBarWithApproach);
+            settings.Realm.Write(realm =>
+            {
+                var rows = realm.All<RealmRulesetSetting>().Where(s => s.RulesetName == rulesetName && s.Variant == variant);
+                var mode = rows.FirstOrDefault(s => s.Key == modeKey);
+                if (mode != null && Enum.TryParse<PaceBarRevealMode>(mode.Value, out var value) && Enum.IsDefined(value))
+                    return;
+
+                var legacy = rows.FirstOrDefault(s => s.Key == legacyKey);
+                var migrated = bool.TryParse(legacy?.Value, out bool enabled) && enabled ? PaceBarRevealMode.Build : PaceBarRevealMode.Off;
+                if (mode == null)
+                    realm.Add(new RealmRulesetSetting { RulesetName = rulesetName, Variant = variant, Key = modeKey, Value = migrated.ToString() });
+                else
+                    mode.Value = migrated.ToString();
+            });
+            return settings;
+        }
+
         protected override void InitialiseDefaults()
         {
             base.InitialiseDefaults();
 
             SetDefault(TypeBeatRulesetSetting.LyricOffsetMs, 0.0, -500.0, 500.0, 1.0);
             SetDefault(TypeBeatRulesetSetting.LyricLabPath, string.Empty);
-            SetDefault(TypeBeatRulesetSetting.LocalAlignerEnabled, true);
             SetDefault(TypeBeatRulesetSetting.LocalAlignerHighQuality, false);
             SetDefault(TypeBeatRulesetSetting.CaretStyle, DEFAULT_CARET_STYLE);
             SetDefault(TypeBeatRulesetSetting.CaretSmoothing, DEFAULT_CARET_SMOOTHING_MS, 0.0f, 50.0f, 1.0f);
@@ -571,7 +615,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Configuration
             SetDefault(TypeBeatRulesetSetting.JudgementIndicator, JudgementIndicatorMode.FadeIn);
             SetDefault(TypeBeatRulesetSetting.PaceColourGradient, 0.0f, 0.0f, 100.0f, 1.0f);
             SetDefault(TypeBeatRulesetSetting.ApproachBars, true);
+            SetDefault(TypeBeatRulesetSetting.BuildPaceBarWithApproach, false);
+            SetDefault(TypeBeatRulesetSetting.PaceBarReveal, PaceBarRevealMode.Off);
+            SetDefault(TypeBeatRulesetSetting.JudgementColouredBars, false);
+            SetDefault(TypeBeatRulesetSetting.LinePushWarningEdges, false);
             SetDefault(TypeBeatRulesetSetting.IndicatorDefaultsApplied, true);
+            SetDefault(TypeBeatRulesetSetting.UseServerAligner, false);
+            SetDefault(TypeBeatRulesetSetting.IsolateVocalsOnImport, true);
         }
     }
 }

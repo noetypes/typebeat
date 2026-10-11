@@ -33,6 +33,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         [TestCase("[12:34:57] separation: running demucs (htdemucs) on cuda ...", ImportStage.SeparatingVocals)]
         [TestCase(@"[12:34:57] separation: cached (C:\lyriclab\work\htdemucs\song\vocals.wav)", ImportStage.SeparatingVocals)]
         [TestCase("Separating track C:\\music\\song.wav", ImportStage.SeparatingVocals)]
+        // Backlog 414: the importer's own line as the --separate-only run starts, and the run's last.
+        [TestCase(LyricMapImporter.SEPARATING_VOCALS_PROGRESS, ImportStage.SeparatingVocals)]
+        [TestCase("[12:36:40] separation: done, total time: 71s", ImportStage.SeparatingVocals)]
         [TestCase("[12:35:21] loading MMS_FA aligner model (first run downloads ~1.2 GB)...", ImportStage.LoadingModel)]
         [TestCase("[12:35:40] computing emissions...", ImportStage.AligningLyrics)]
         [TestCase("[12:35:41] emissions: chunk 7/31 frames=1490", ImportStage.AligningLyrics)]
@@ -67,24 +70,71 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         // The split's degrade: nothing was extracted, so it must not light the extraction step (and
         // "extractor available" must not read as the aligner handover's "unavailable" either).
         [TestCase("no audio extractor available (no ffmpeg found on this machine), keeping the video file as the map's audio")]
+        // Backlog 414: an import that could not isolate the vocals packages the map anyway. Its reason
+        // names the aligner (and could say "unavailable"), which must not read as an alignment
+        // starting or as the aligner handover.
+        [TestCase(ImportProgressParser.VOCALS_NOT_ISOLATED_PREFIX + LyricMapImporter.VOCALS_NEED_THE_ALIGNER)]
+        [TestCase("vocals not isolated: the separation failed (aligner unavailable, trying next option).")]
+        [TestCase(@"[12:36:40] vocals stem written to C:\lyriclab\out\typebeat_vocals_Some Artist - A Song\vocals.wav")]
         public void TestUnknownLinesClaimNoStage(string line)
             => Assert.That(ImportProgressParser.Parse(line).Stage, Is.Null);
 
         /// <summary>
-        /// The server-side aligner is retired, so no stage may promise one. An import now runs
-        /// entirely on this machine (the local aligner, else the lyrics' own line stamps), so there is
-        /// no upload step, no queue wait, and nothing on screen that names a server. This is the pin
-        /// that keeps a reinstated upload/wait pair from sneaking the old promise back into the UI.
+        /// Backlog 413 INVERTS the retirement pin (backlog 287's <c>TestNoStagePromisesAServer</c>, which
+        /// held while no import could reach a server): the server aligner is back as an opt-in, so
+        /// exactly three stages name it, the upload, the queue wait and the server's own run, and
+        /// every other stage still must not. A local run, or a line-stamped one, never says it is on a
+        /// server, and a server run never shows the local aligner's steps as rows of its own.
         /// </summary>
         [Test]
-        public void TestNoStagePromisesAServer()
+        public void TestOnlyTheServerStagesNameTheServer()
         {
+            var server = new[] { ImportStage.Uploading, ImportStage.WaitingForServer, ImportStage.ServerAligning };
+
             foreach (ImportStage stage in Enum.GetValues<ImportStage>())
             {
-                Assert.That(stage.ToString(), Does.Not.Contain("Server").IgnoreCase, "no stage names a server");
-                Assert.That(stage.ToString(), Does.Not.Contain("Upload").IgnoreCase, "nothing is uploaded by an import");
-                Assert.That(ImportProgressParser.LabelFor(stage), Does.Not.Contain("server").IgnoreCase, $"{stage}'s label names a server");
+                string label = ImportProgressParser.LabelFor(stage);
+
+                if (server.Contains(stage))
+                    Assert.That(label, Does.Contain("server"), $"{stage} is a server stage and should say so");
+                else
+                    Assert.That(label, Does.Not.Contain("server").IgnoreCase, $"{stage}'s label names a server");
             }
+
+            Assert.That(server.Select(ImportProgressParser.LabelFor), Is.EqualTo(new[] { "uploading to the server", "waiting for the server", "aligning on the server" }));
+        }
+
+        /// <summary>
+        /// The server aligner client's lines (backlog 413), produced by the very builders it uses: the
+        /// upload with its percentage, the queue position as a NOTE (never in the label, which may not
+        /// carry digits), and the server's own aligner log relayed under one prefix, so the server's
+        /// steps become the server row's note and bar rather than local-stage rows.
+        /// </summary>
+        [Test]
+        public void TestServerLines()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(ImportProgressParser.Parse(ImportProgressParser.SERVER_UPLOADING), Is.EqualTo(new ImportProgressUpdate(ImportStage.Uploading, null)));
+                Assert.That(ImportProgressParser.Parse(ImportProgressParser.SERVER_UPLOADING + " 45%"), Is.EqualTo(new ImportProgressUpdate(ImportStage.Uploading, 0.45f)));
+
+                Assert.That(ImportProgressParser.Parse(ImportProgressParser.ServerQueueLine(3)), Is.EqualTo(new ImportProgressUpdate(ImportStage.WaitingForServer, null, "position 3 in the queue")));
+                Assert.That(ImportProgressParser.Parse(ImportProgressParser.ServerQueueLine(1)), Is.EqualTo(new ImportProgressUpdate(ImportStage.WaitingForServer, null, "next in the queue")));
+                Assert.That(ImportProgressParser.Parse(ImportProgressParser.ServerQueueLine(null)), Is.EqualTo(new ImportProgressUpdate(ImportStage.WaitingForServer, null)));
+
+                Assert.That(ImportProgressParser.Parse(ImportProgressParser.ServerProgressLine(null)), Is.EqualTo(new ImportProgressUpdate(ImportStage.ServerAligning, null)));
+                Assert.That(ImportProgressParser.Parse(ImportProgressParser.ServerProgressLine("[12:34:57] separation: running demucs (htdemucs) on cpu ...")),
+                    Is.EqualTo(new ImportProgressUpdate(ImportStage.ServerAligning, null, "separating vocals")));
+                Assert.That(ImportProgressParser.Parse(ImportProgressParser.ServerProgressLine("[12:35:41] emissions: chunk 7/31 frames=1490")),
+                    Is.EqualTo(new ImportProgressUpdate(ImportStage.ServerAligning, 7f / 31f, "aligning lyrics")));
+                Assert.That(ImportProgressParser.Parse(ImportProgressParser.ServerProgressLine("[12:35:21] loading MMS_FA aligner model (first run downloads ~1.2 GB)...")),
+                    Is.EqualTo(new ImportProgressUpdate(ImportStage.ServerAligning, null, "loading model")));
+
+                // A failure the server relays mid-run is still the server's run, never the local
+                // aligner's hand-over to the line stamps.
+                Assert.That(ImportProgressParser.Parse(ImportProgressParser.ServerProgressLine("aligner unavailable (x), trying next option")).Stage, Is.EqualTo(ImportStage.ServerAligning));
+                Assert.That(ImportProgressParser.Parse(ImportProgressParser.ServerProgressLine("done")), Is.EqualTo(new ImportProgressUpdate(ImportStage.ServerAligning, null)));
+            });
         }
 
         /// <summary>
@@ -158,5 +208,28 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         [TestCase("")]
         public void TestNoProgressFraction(string line)
             => Assert.That(ImportProgressParser.ParseProgress(line), Is.Null);
+
+        /// <summary>
+        /// Aligner version 10's fused evidence lines (backlog 411, on for every import) arrive after
+        /// the version 9 decode, so at most they hold the display on aligning: none may read as a
+        /// fall-back (the path falling back to version 9 is not the aligner being unavailable) or
+        /// send it back to an earlier stage, and none carries a bogus progress fraction.
+        /// </summary>
+        [TestCase("[12:34:56] fused evidence: lyrics language english (flag); fuse median3")]
+        [TestCase("[12:34:56] fused evidence: lyrics language japanese (flag); only English is validated, running the version 9 path")]
+        [TestCase("[12:34:56] fused evidence: not available with vocal mode estimated; running the version 9 path")]
+        [TestCase("[12:40:01] fused evidence: downloading the QMUL multilingual weights (57 MB, https://raw.githubusercontent.com/jhuang448/LyricsAlignment-Multilingual/ca1a3923d6c8bf7d20eefa1080f3f104a6173d38/checkpoints/checkpoint_Baseline)")]
+        [TestCase("[12:40:09] fused evidence: QMUL multilingual pass, 11873 frames in 6.2s")]
+        [TestCase("[12:40:10] fused evidence: decoding the QMUL path ('*' penalty 2)")]
+        [TestCase("[12:40:13] fused evidence: decoding the ep path (weight 1, floor -8)")]
+        [TestCase("[12:40:16] fused evidence: fuse median3, 41 word start(s) moved from version 9, 17 word(s) flagged for review")]
+        [TestCase("[12:40:02] WARNING: fused evidence failed (RuntimeError: a dependency is missing (No module named 'phonemizer'); install phonemizer and espeakng-loader); keeping the version 9 path")]
+        public void FusedEvidenceLinesNeverMoveTheDisplayBack(string line)
+        {
+            var update = ImportProgressParser.Parse(line);
+
+            Assert.That(update.Stage, Is.Null.Or.EqualTo(ImportStage.AligningLyrics));
+            Assert.That(update.Progress, Is.Null);
+        }
     }
 }

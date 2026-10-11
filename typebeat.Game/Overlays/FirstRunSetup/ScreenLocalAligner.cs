@@ -19,9 +19,9 @@ namespace typebeat.Game.Overlays.FirstRunSetup
     /// First-run pitch for the LOCAL lyriclab auto-aligner: explains what the aligner does (AI
     /// word-by-word lyric timing for created maps), why it is worth the one-time multi-GB download
     /// on a machine with a good GPU (nothing uploaded, no account needed), and offers the install
-    /// right here. Entirely skippable: with no aligner installed an import times itself from the
-    /// lyrics' own [mm:ss.xx] line stamps, and the install stays available from Settings. There is no
-    /// third option, the server-side aligner this screen used to name as the default is retired.
+    /// right here. Entirely skippable: with no aligner installed a signed-in player can opt in to the
+    /// server aligner on the import screen (backlog 413), otherwise an import times itself from the
+    /// lyrics' own [mm:ss.xx] line stamps, and the install stays available from Settings.
     /// </summary>
     [LocalisableDescription(typeof(FirstRunSetupOverlayStrings), nameof(FirstRunSetupOverlayStrings.LocalAligner))]
     public partial class ScreenLocalAligner : WizardScreen
@@ -73,9 +73,10 @@ namespace typebeat.Game.Overlays.FirstRunSetup
             {
                 installButton.Enabled.Value = false;
                 installButton.Complete();
-                statusText.Text = alignerManager.UpdateAvailable
-                    ? "The local auto-aligner is installed, and this build ships a newer one: press Update in Settings > Experimental to refresh it (seconds; the downloaded environment is kept)."
-                    : "The local auto-aligner is already installed.";
+                // A mismatched install blocks automatic alignment (backlog 410), so the line says so
+                // rather than presenting the update as optional.
+                statusText.Text = LocalAlignerVersion.FirstRunStatus(alignerManager.VersionStatus, alignerManager.InstalledVersion, alignerManager.ShippedVersion)
+                                  ?? "The local auto-aligner is already installed.";
                 return;
             }
 
@@ -133,7 +134,7 @@ namespace typebeat.Game.Overlays.FirstRunSetup
                         else
                         {
                             installButton.Abort();
-                            statusText.Text = $"Install failed: {result.Error}. You can retry, or install later from Settings. Until then, imports will use your lyrics' own [mm:ss.xx] line stamps.";
+                            statusText.Text = $"Install failed: {result.Error}. You can retry, or install later from Settings. Until then, imports can use the server aligner (sign in and tick it on the import screen) or your lyrics' own [mm:ss.xx] line stamps.";
                         }
                     });
                 }

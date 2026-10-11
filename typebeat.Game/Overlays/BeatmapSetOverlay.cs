@@ -34,7 +34,7 @@ namespace typebeat.Game.Overlays
         private (BeatmapSetLookupType type, int id)? lastLookup;
 
         public BeatmapSetOverlay()
-            : base(OverlayColourScheme.Pink)
+            : base(OverlayColourScheme.Pink, guestReadable: true)
         {
             Info info;
             CommentsSection comments;
@@ -71,11 +71,9 @@ namespace typebeat.Game.Overlays
         private void load()
         {
             apiUser = api.LocalUser.GetBoundCopy();
-            apiUser.BindValueChanged(_ => Schedule(() =>
-            {
-                if (api.IsLoggedIn)
-                    performFetch();
-            }));
+            // refetched for a guest too: the set is a public read, and the signed-in user's own fields on it
+            // (has favourited, their score) belong to whoever is signed in now.
+            apiUser.BindValueChanged(_ => Schedule(performFetch));
         }
 
         protected override BeatmapSetHeader CreateHeader() => new BeatmapSetHeader();
@@ -119,9 +117,6 @@ namespace typebeat.Game.Overlays
 
         private void performFetch()
         {
-            if (!api.IsLoggedIn)
-                return;
-
             if (lastLookup == null)
                 return;
 
@@ -129,8 +124,11 @@ namespace typebeat.Game.Overlays
             req.Success += res =>
             {
                 beatmapSet.Value = res;
-                if (lastLookup.Value.type == BeatmapSetLookupType.BeatmapId)
-                    Header.HeaderContent.Picker.Beatmap.Value = Header.BeatmapSet.Value.Beatmaps.First(b => b.OnlineID == lastLookup.Value.id);
+                // The difficulty a card's link named (beatmapsets/lookup?beatmap_id=). Should it be missing from the set,
+                // the picker keeps its own default selection rather than throwing on the update thread.
+                if (lastLookup.Value.type == BeatmapSetLookupType.BeatmapId
+                    && Header.BeatmapSet.Value.Beatmaps.FirstOrDefault(b => b.OnlineID == lastLookup.Value.id) is APIBeatmap requested)
+                    Header.HeaderContent.Picker.Beatmap.Value = requested;
             };
             API.Queue(req);
         }
