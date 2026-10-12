@@ -93,10 +93,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         [TestCase("真っ赤", "makka")]
         [TestCase("月とカレー", "tukitokare-")]
         [TestCase("天 つき", "ten tsuki")]
-        [TestCase("天 つき", "tenn tuki")]
-        [TestCase("月 と テンシ", "tuki to tennshi")]
-        [TestCase("月 と テンシ", "tsuki to tensi")]
-        [TestCase("月　と　テンシ", "tsuki to tenshi")]
+        [TestCase("天 つき", "tenntuki")]
+        [TestCase("月 と テンシ", "tukitotennshi")]
+        [TestCase("月 と テンシ", "tsukitotensi")]
+        [TestCase("月　と　テンシ", "tsukitotenshi")]
         [TestCase("コーヒー", "ko-hi-")]
         [TestCase("はをへ", "waoe")]
         [TestCase("はをへ", "hawohe")]
@@ -124,9 +124,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             });
         }
 
-        [TestCase("月 と テンシ", "tuki to tennshi")]
-        [TestCase("月　と　テンシ", "tsuki to tensi")]
-        [TestCase("月 と ｷｬ", "tuki to kya")]
+        [TestCase("月 と テンシ", "tukitotennshi")]
+        [TestCase("月　と　テンシ", "tsukitotensi")]
+        [TestCase("月 と ｷｬ", "tukitokya")]
         public void KanaStillAcceptsRomajiInASpacedMixedScriptLine(string original, string input)
         {
             var words = LyricOriginals.CollapseWhitespace(original).Split(' ');
@@ -150,7 +150,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
                 Assert.That(engine.ProcessKey(c, 1200), Is.True, c.ToString());
             Assert.Multiple(() =>
             {
-                Assert.That(engine.Lines[0].DisplayText, Is.EqualTo(string.Join(' ', words)));
+                Assert.That(engine.Lines[0].DisplayText, Is.EqualTo(string.Concat(words)));
                 Assert.That(engine.Lines[0].Cells.All(c => c.State == CellState.Correct), Is.True);
                 Assert.That(engine.Mistypes, Is.Zero);
                 Assert.That(engine.JapanesePending, Is.Empty);
@@ -285,13 +285,15 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         }
 
         [Test]
-        public void FreestyleStillAcceptsSpaceOnJapaneseMaps()
+        public void FreestyleStillRefusesSpaceOnJapaneseMaps()
         {
+            // Backlog 50 holds under Japanese input too: a freestyle slot refuses the space key, so
+            // the romaji processor must not turn the skip key into a fill.
             var engine = create("&");
             engine.SpaceSkipsWord = true;
             Assert.That(engine.ProcessKey(' ', 1100), Is.True);
-            Assert.That(engine.Lines[0].Cells.Single().State, Is.EqualTo(CellState.Correct));
-            Assert.That(engine.Lines[0].Cells.Single().TypedChar, Is.EqualTo(' '));
+            Assert.That(engine.Lines[0].Cells.Single().State, Is.EqualTo(CellState.Untyped));
+            Assert.That(engine.Lines[0].Cells.Single().TypedChar, Is.Null);
         }
 
         [TestCase("、")]
