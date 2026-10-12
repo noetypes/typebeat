@@ -281,7 +281,7 @@ namespace typebeat.Game.Database
                         throw new InvalidOperationException("beatmap file could not be read");
 
                     var (targetWpm, hasIntroBeatdrop) = StoredBeatmapFacts.Compute(working);
-                    var tags = StoredBeatmapFacts.ComputeDifficultyTags(working);
+                    var tags = StoredBeatmapFacts.ComputeDifficultyTagInfo(working);
                     var fileMetadata = working.Beatmap.Metadata;
                     bool metadataChanged = false;
 
@@ -293,7 +293,7 @@ namespace typebeat.Game.Database
                             metadataChanged = StoredBeatmapFacts.StampFileMetadata(liveBeatmapInfo.Metadata, fileMetadata);
                             liveBeatmapInfo.TargetWpm = targetWpm;
                             liveBeatmapInfo.HasIntroBeatdrop = hasIntroBeatdrop;
-                            liveBeatmapInfo.DifficultyTags = tags;
+                            liveBeatmapInfo.DifficultyTagInfo = tags;
                             liveBeatmapInfo.DifficultyTagsVersion = difficultyTagsVersion;
 
                             if (NeedsOnlineLanguage(liveBeatmapInfo))

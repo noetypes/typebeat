@@ -11,39 +11,60 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
     /// <summary>Describes the authored map using the same windows, rhythm boost and typability index as SR.</summary>
     public static class DifficultyTagClassifier
     {
-        public const double RHYTHM_MULTIPLIER_THRESHOLD = 1.08;
-        public const double COMPLEX_Z_THRESHOLD = -0.5;
+        public const double RHYTHM_MULTIPLIER_THRESHOLD = 1.07;
+        public const double COMPLEX_Z_THRESHOLD = 0;
         public const double MINIMUM_WINDOW_STRAIN = 0.35;
-        public const double BURST_DOMINANCE = 1.25;
 
-        public static BeatmapDifficultyTags Compute(IEnumerable<LyricLine> source)
+        public static BeatmapDifficultyTags Compute(IEnumerable<LyricLine> source) => ComputeInfo(source).Tags;
+
+        public static BeatmapDifficultyTagInfo ComputeInfo(IEnumerable<LyricLine> source)
         {
             var lines = source.ToList();
-            var rating = LyricDifficulty.RateChunked(lines, 1, false, LyricDifficulty.ShippedScores, ChunkedEndurance.Live);
+            var rating = LyricDifficulty.RateChunked(lines, 1, false, LyricDifficulty.ShippedScores, ChunkedEndurance.Active);
             var report = rating.Report;
             BeatmapDifficultyTags tags = BeatmapDifficultyTags.None;
 
-            if (report.RhythmMultiplier >= RHYTHM_MULTIPLIER_THRESHOLD)
+            if (HasRhythm(report))
                 tags |= BeatmapDifficultyTags.Rhythm;
 
             // Unscored words are unknown, not evidence of difficult spelling.
-            if (rating.TypabilityApplied && rating.TypabilityMeanZ <= COMPLEX_Z_THRESHOLD)
+            if (rating.TypabilityApplied && rating.TypabilityMeanZ < COMPLEX_Z_THRESHOLD)
                 tags |= BeatmapDifficultyTags.Complex;
 
             if (lines.Any(line => line.RawText.Any(Typeability.IsFreestyle)))
                 tags |= BeatmapDifficultyTags.Freestyle;
 
-            // Compare to sustained windows when the map has them. Short maps use their longer
-            // supported windows instead, so a steady short map is not automatically a burst map.
-            double sustainedPeak = report.SustainedWindowPeak > 0 ? report.SustainedWindowPeak : report.LongerWindowPeak;
-            if (report.ShortWindowPeak >= MINIMUM_WINDOW_STRAIN
-                && sustainedPeak > 0
-                && report.ShortWindowPeak >= sustainedPeak * BURST_DOMINANCE)
-                tags |= BeatmapDifficultyTags.Burst;
-            else if (report.SustainedWindowPeak >= MINIMUM_WINDOW_STRAIN)
+            tags |= TimingTags(report);
+
+            return new BeatmapDifficultyTagInfo(tags)
+            {
+                BurstWindow = tags.HasFlag(BeatmapDifficultyTags.Burst) ? describe(report.HardestWindow) : null,
+                SustainWindow = tags.HasFlag(BeatmapDifficultyTags.Sustain) ? describe(report.SustainedWindow) : null,
+                StaminaWindow = tags.HasFlag(BeatmapDifficultyTags.Stamina) ? describe(report.StaminaWindow) : null,
+            };
+        }
+
+        internal static BeatmapDifficultyTags TimingTags(ChunkedEndurance.Report report)
+        {
+            BeatmapDifficultyTags tags = BeatmapDifficultyTags.None;
+            // Stamina is the longer-duration label. A map qualifying for it does not also need Sustain.
+            if (report.DurationSeconds > 180 && report.StaminaWindow.Seconds > ChunkedEndurance.stamina_profile_seconds
+                && report.StaminaWindow.Strain >= MINIMUM_WINDOW_STRAIN)
                 tags |= BeatmapDifficultyTags.Stamina;
+            else if (report.SustainedWindowPeak >= MINIMUM_WINDOW_STRAIN)
+                tags |= BeatmapDifficultyTags.Sustain;
+
+            // Burst can accompany either sustained tag whenever the hardest SR window is short.
+            if (report.HardestWindow.Seconds > 0 && report.HardestWindow.Seconds <= ChunkedEndurance.short_profile_seconds
+                && report.HardestWindow.Strain >= MINIMUM_WINDOW_STRAIN)
+                tags |= BeatmapDifficultyTags.Burst;
 
             return tags;
         }
+
+        internal static bool HasRhythm(ChunkedEndurance.Report report)
+            => report.WholeMapRhythmMultiplier >= RHYTHM_MULTIPLIER_THRESHOLD || report.HardestWindowRhythmMultiplier >= RHYTHM_MULTIPLIER_THRESHOLD;
+
+        private static DifficultyTagWindow describe(ChunkedEndurance.WindowProfile window) => new DifficultyTagWindow(window.Wpm, window.Seconds);
     }
 }

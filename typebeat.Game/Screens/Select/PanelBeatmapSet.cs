@@ -216,7 +216,7 @@ namespace typebeat.Game.Screens.Select
 
             var set = groupedBeatmapSet.BeatmapSet;
             var selected = set.Beatmaps.FirstOrDefault(b => b.ID == selectedBeatmap.Value.BeatmapInfo.ID);
-            difficultyTags.Tags = (selected ?? set.Beatmaps.MaxBy(b => b.StarRating))?.DifficultyTags ?? BeatmapDifficultyTags.None;
+            difficultyTags.Info = (selected ?? set.Beatmaps.MaxBy(b => b.StarRating))?.DifficultyTagInfo ?? BeatmapDifficultyTagInfo.Empty;
         }
 
         protected override void FreeAfterUse()

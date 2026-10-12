@@ -397,7 +397,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             {
                 // The arm is a DIAL OF THE RHYTHM AXIS rather than a filter over the finished rating,
                 // exactly as it is in the sandbox where it rides in the complexity settings.
-                ChunkedEndurance.Settings armSettings = ChunkedEndurance.Live with
+                ChunkedEndurance.Settings armSettings = ChunkedEndurance.Active with
                 {
                     complexity_mod = judgementArm switch
                     {

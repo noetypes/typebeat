@@ -72,8 +72,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                         BeatmapSet = set,
                         StarRating = name == "Hard" ? 5 : 2,
                         Status = BeatmapOnlineStatus.Ranked,
-                        DifficultyTags = name == "Hard" ? BeatmapDifficultyTags.Rhythm | BeatmapDifficultyTags.Stamina : BeatmapDifficultyTags.Freestyle | BeatmapDifficultyTags.Burst,
+                        DifficultyTags = name == "Hard" ? BeatmapDifficultyTags.Rhythm | BeatmapDifficultyTags.Sustain | BeatmapDifficultyTags.Stamina : BeatmapDifficultyTags.Freestyle | BeatmapDifficultyTags.Burst,
                         DifficultyTagsVersion = StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION,
+                        BurstWindowWpm = name == "Normal" ? 233 : 0,
+                        BurstWindowSeconds = name == "Normal" ? 1.5 : 0,
+                        SustainWindowWpm = name == "Hard" ? 175 : 0,
+                        SustainWindowSeconds = name == "Hard" ? 24 : 0,
+                        StaminaWindowWpm = name == "Hard" ? 160 : 0,
+                        StaminaWindowSeconds = name == "Hard" ? 48 : 0,
                     });
                 }
 
@@ -225,6 +231,27 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             AddStep("show tags", () => config.SetValue(OsuSetting.ShowDifficultyTags, true));
             AddUntilStep("all tag rows shown", () => tagsOf(setPanel).Alpha == 1 && tagsOf(standalonePanel).Alpha == 1 && tagsOf(songSelect.ChildrenOfType<BeatmapTitleWedge>().Single()).Alpha == 1);
         }
+
+        [Test]
+        public void WindowTooltipsFollowTheSelectedDifficulty()
+        {
+            requireDifficultyTags();
+            BeatmapInfo normal = null!, hard = null!;
+            AddStep("get difficulty fixtures", () => { normal = beatmapSet.Beatmaps.First(); hard = beatmapSet.Beatmaps.Last(); });
+            AddUntilStep("standalone burst explains its window", () => hasWindowTooltip(standalonePanel, BeatmapDifficultyTags.Burst, "(233wpm / 1.5s)"));
+            AddStep("select normal", () => Beatmap.Value = CreateWorkingBeatmap(new TypeBeatBeatmap { BeatmapInfo = normal }));
+            AddUntilStep("set burst explains its window", () => hasWindowTooltip(setPanel, BeatmapDifficultyTags.Burst, "(233wpm / 1.5s)"));
+            AddUntilStep("title burst explains its window", () => hasWindowTooltip(songSelect.ChildrenOfType<BeatmapTitleWedge>().Single(), BeatmapDifficultyTags.Burst, "(233wpm / 1.5s)"));
+            AddStep("select hard", () => Beatmap.Value = CreateWorkingBeatmap(new TypeBeatBeatmap { BeatmapInfo = hard }));
+            AddUntilStep("set sustain explains its window", () => hasWindowTooltip(setPanel, BeatmapDifficultyTags.Sustain, "(175wpm / 24s)"));
+            AddUntilStep("set stamina explains its window", () => hasWindowTooltip(setPanel, BeatmapDifficultyTags.Stamina, "(160wpm / 48s)"));
+            AddUntilStep("title stamina explains its window", () => hasWindowTooltip(songSelect.ChildrenOfType<BeatmapTitleWedge>().Single(), BeatmapDifficultyTags.Stamina, "(160wpm / 48s)"));
+            AddStep("update window without changing flags", () => tagsOf(standalonePanel).Info = normal.DifficultyTagInfo with { BurstWindow = new DifficultyTagWindow(250, 3) });
+            AddUntilStep("tooltip updates with unchanged flags", () => hasWindowTooltip(standalonePanel, BeatmapDifficultyTags.Burst, "(250wpm / 3s)"));
+        }
+
+        private static bool hasWindowTooltip(Drawable drawable, BeatmapDifficultyTags tag, string text)
+            => tagsOf(drawable).Children.SingleOrDefault(pill => pill.Tag == tag)?.TooltipText.ToString().EndsWith(text, StringComparison.Ordinal) == true;
 
         [Test]
         public void ShowTagsButtonControlsVisibility()

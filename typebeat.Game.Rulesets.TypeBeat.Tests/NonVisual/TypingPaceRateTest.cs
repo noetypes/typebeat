@@ -70,6 +70,26 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             });
         }
 
+        [TestCase(0.75)]
+        [TestCase(1.0)]
+        [TestCase(1.5)]
+        public void PeakBelowTheAverageIsRaisedAtEachPlaybackRate(double rate)
+        {
+            var beatmap = new TypeBeatBeatmap();
+            addLine(beatmap, 0, 0, 1000, new List<TimedUnit>
+            {
+                new TimedUnit { Text = new string('a', 16), StartTime = 0, EndTime = 1000 },
+            });
+
+            var lines = beatmap.HitObjects.Select(h => h.Line).ToArray();
+            var curve = LyricWpmCurve.Compute(lines, rate: rate);
+            TypingPaceProfile pace = beatmap.GetTypingPace(rate)!;
+
+            Assert.That(curve.PeakWpm, Is.LessThan(pace.AverageWpm), "the short burst is diluted by the peak's minimum window");
+            Assert.That(pace.PeakWpm, Is.EqualTo(pace.AverageWpm).Within(1e-9));
+            Assert.That(pace.WpmCurve, Is.EqualTo(curve.Curve), "the display floor must preserve the raw curve");
+        }
+
         [TestCase(1.0, 128.0)]
         [TestCase(1.5, 184.0)]
         [TestCase(0.75, 96.0)]

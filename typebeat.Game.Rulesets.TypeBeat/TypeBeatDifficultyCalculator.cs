@@ -12,6 +12,7 @@ using typebeat.Game.Rulesets.Mods;
 using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
 using typebeat.Game.Rulesets.TypeBeat.Objects;
 using typebeat.Game.Rulesets.TypeBeat.Scoring;
+using typebeat.Game.Utils;
 
 namespace typebeat.Game.Rulesets.TypeBeat
 {
@@ -86,8 +87,10 @@ namespace typebeat.Game.Rulesets.TypeBeat
         /// </summary>
         // v6 removes the overlapping model's minimum character cutoff and carries played lyric
         // duration for the short-map pp factor; invalidate previously cached difficulty attributes.
-        // v7 counts spaces produced by punctuation; refresh stored star ratings and target pace.
-        public override int Version => 7;
+        // Dev v7 extends windows through the playable map and moves full length credit to 2000.
+        // The two generations retain separate calibration when their caches are refreshed.
+        // v7 (dev v8) counts default-stream spaces produced by punctuation; refresh stored ratings and pace.
+        public override int Version => DevelopmentFeatures.ExperimentalDifficulty ? 8 : 7;
 
         protected override DifficultyAttributes CreateDifficultyAttributes(IBeatmap beatmap, Mod[] mods, Skill[] skills)
         {

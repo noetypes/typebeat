@@ -47,15 +47,17 @@ namespace typebeat.Game.Beatmaps
         public const double UNPROCESSED = -1;
 
         /// <summary>Bump when classification changes to refresh cached tags in existing libraries.</summary>
-        public const int DIFFICULTY_TAGS_VERSION = 1;
+        public const int DIFFICULTY_TAGS_VERSION = 5;
 
         /// <summary>Release builds leave tags unprocessed so a later dev build can classify them.</summary>
         public static int ActiveDifficultyTagsVersion => DevelopmentFeatures.DifficultyTags ? DIFFICULTY_TAGS_VERSION : 0;
 
-        public static BeatmapDifficultyTags ComputeDifficultyTags(IWorkingBeatmap working)
+        public static BeatmapDifficultyTags ComputeDifficultyTags(IWorkingBeatmap working) => ComputeDifficultyTagInfo(working).Tags;
+
+        public static BeatmapDifficultyTagInfo ComputeDifficultyTagInfo(IWorkingBeatmap working)
             => DevelopmentFeatures.DifficultyTags
-                ? (working.GetPlayableBeatmap(working.BeatmapInfo.Ruleset, Array.Empty<Mod>()) as IHasDifficultyTags)?.GetDifficultyTags() ?? BeatmapDifficultyTags.None
-                : BeatmapDifficultyTags.None;
+                ? (working.GetPlayableBeatmap(working.BeatmapInfo.Ruleset, Array.Empty<Mod>()) as IHasDifficultyTags)?.GetDifficultyTagInfo() ?? BeatmapDifficultyTagInfo.Empty
+                : BeatmapDifficultyTagInfo.Empty;
 
         /// <summary>
         /// Whether a row's stored facts can be trusted. See the class remarks.
@@ -90,11 +92,11 @@ namespace typebeat.Game.Beatmaps
             StampFileMetadata(beatmap.Metadata, working.Beatmap.Metadata);
 
             var (targetWpm, hasIntroBeatdrop) = Compute(working);
-            var tags = ComputeDifficultyTags(working);
+            var tags = ComputeDifficultyTagInfo(working);
 
             beatmap.TargetWpm = targetWpm;
             beatmap.HasIntroBeatdrop = hasIntroBeatdrop;
-            beatmap.DifficultyTags = tags;
+            beatmap.DifficultyTagInfo = tags;
             beatmap.DifficultyTagsVersion = ActiveDifficultyTagsVersion;
         }
 

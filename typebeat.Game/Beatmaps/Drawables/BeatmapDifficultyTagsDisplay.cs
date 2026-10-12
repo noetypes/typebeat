@@ -15,23 +15,29 @@ namespace typebeat.Game.Beatmaps.Drawables
     public partial class BeatmapDifficultyTagsDisplay : FillFlowContainer<BeatmapDifficultyTagPill>
     {
         private readonly BindableBool showTags = new BindableBool(true);
-        private BeatmapDifficultyTags tags;
+        private BeatmapDifficultyTagInfo info = BeatmapDifficultyTagInfo.Empty;
 
         public float TextSize { get; init; } = OsuFont.Style.Caption2.Size;
         public MarginPadding TextPadding { get; init; } = new MarginPadding { Horizontal = 4, Bottom = 1 };
 
         public BeatmapDifficultyTags Tags
         {
-            get => tags;
+            get => info.Tags;
+            set => Info = new BeatmapDifficultyTagInfo(value);
+        }
+
+        public BeatmapDifficultyTagInfo Info
+        {
+            get => info;
             set
             {
                 if (!DevelopmentFeatures.DifficultyTags)
-                    value = BeatmapDifficultyTags.None;
-                if ((value & BeatmapDifficultyTags.Burst) != 0)
-                    value &= ~BeatmapDifficultyTags.Stamina;
-                if (tags == value)
+                    value = BeatmapDifficultyTagInfo.Empty;
+                if ((value.Tags & BeatmapDifficultyTags.Burst) != 0)
+                    value = value with { Tags = value.Tags & ~(BeatmapDifficultyTags.Sustain | BeatmapDifficultyTags.Stamina) };
+                if (info == value)
                     return;
-                tags = value;
+                info = value;
                 if (IsLoaded)
                     rebuild();
             }
@@ -63,14 +69,14 @@ namespace typebeat.Game.Beatmaps.Drawables
                 return;
             }
 
-            foreach (var tag in new[] { BeatmapDifficultyTags.Rhythm, BeatmapDifficultyTags.Complex, BeatmapDifficultyTags.Freestyle, BeatmapDifficultyTags.Burst, BeatmapDifficultyTags.Stamina })
+            foreach (var tag in new[] { BeatmapDifficultyTags.Rhythm, BeatmapDifficultyTags.Complex, BeatmapDifficultyTags.Freestyle, BeatmapDifficultyTags.Burst, BeatmapDifficultyTags.Sustain, BeatmapDifficultyTags.Stamina })
             {
-                if ((tags & tag) != 0)
-                    Add(new BeatmapDifficultyTagPill(tag) { TextSize = TextSize, TextPadding = TextPadding });
+                if ((Tags & tag) != 0)
+                    Add(new BeatmapDifficultyTagPill(tag, info.WindowFor(tag)) { TextSize = TextSize, TextPadding = TextPadding });
             }
             updateVisibility();
         }
 
-        private void updateVisibility() => Alpha = DevelopmentFeatures.DifficultyTags && showTags.Value && tags != BeatmapDifficultyTags.None ? 1 : 0;
+        private void updateVisibility() => Alpha = DevelopmentFeatures.DifficultyTags && showTags.Value && Tags != BeatmapDifficultyTags.None ? 1 : 0;
     }
 }

@@ -123,6 +123,34 @@ namespace typebeat.Game.Beatmaps
             set => DifficultyTagsInt = (int)value;
         }
 
+        public double BurstWindowWpm { get; set; }
+        public double BurstWindowSeconds { get; set; }
+        public double SustainWindowWpm { get; set; }
+        public double SustainWindowSeconds { get; set; }
+        public double StaminaWindowWpm { get; set; }
+        public double StaminaWindowSeconds { get; set; }
+
+        [Ignored]
+        public BeatmapDifficultyTagInfo DifficultyTagInfo
+        {
+            get => new BeatmapDifficultyTagInfo(DifficultyTags)
+            {
+                BurstWindow = BurstWindowSeconds > 0 ? new DifficultyTagWindow(BurstWindowWpm, BurstWindowSeconds) : null,
+                SustainWindow = SustainWindowSeconds > 0 ? new DifficultyTagWindow(SustainWindowWpm, SustainWindowSeconds) : null,
+                StaminaWindow = StaminaWindowSeconds > 0 ? new DifficultyTagWindow(StaminaWindowWpm, StaminaWindowSeconds) : null,
+            };
+            set
+            {
+                DifficultyTags = value.Tags;
+                BurstWindowWpm = value.BurstWindow?.Wpm ?? 0;
+                BurstWindowSeconds = value.BurstWindow?.Seconds ?? 0;
+                SustainWindowWpm = value.SustainWindow?.Wpm ?? 0;
+                SustainWindowSeconds = value.SustainWindow?.Seconds ?? 0;
+                StaminaWindowWpm = value.StaminaWindow?.Wpm ?? 0;
+                StaminaWindowSeconds = value.StaminaWindow?.Seconds ?? 0;
+            }
+        }
+
         /// <summary>Zero until the local map has been classified, including libraries predating tags.</summary>
         public int DifficultyTagsVersion { get; set; }
 

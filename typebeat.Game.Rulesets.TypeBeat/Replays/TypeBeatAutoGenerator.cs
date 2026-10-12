@@ -127,24 +127,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                 var line = TypingLine.ForMods(lineObject.Line, literate, lineObject.Polyglot, lineObject.PolyglotLanguage);
                 line.SetAlignedSubdivisionTargets(alignSubdivisionTargets);
 
-                // The line is typeable in [ActivationTime, EndTime + SealGraceMs); keep a margin
-                // before the deadline so a boundary-pinned target is still pressed while typeable.
-                double windowStart = line.ActivationTime;
-                double windowEnd = Math.Max(windowStart, line.EndTime + line.SealGraceMs - seal_margin_ms);
-
-                // Integral millisecond at which the line is genuinely open. Real maps carry
-                // fractional times, and a line's activation is routinely its exact StartTime (which
-                // IS the previous line's EndTime, the decoder makes the windows contiguous). Rounding
-                // such a target DOWN, even by a fraction of a millisecond, moves the press to the
-                // wrong side of that boundary: the previous line has not sealed yet, so it is still
-                // the active one, it is already fully typed, and TypingEngine.ProcessKey answers a
-                // complete line by doing nothing at all. The press vanishes with no judgement and no
-                // rejection, and every remaining press on the new line lands one cell early. On an
-                // all-freestyle line the drift is invisible (any key matches) right up to the first
-                // space cell, where autoplay's space hits a freestyle cell (which rejects space) and
-                // its letters then hit the space cell, rejected over and over until the mash guard
-                // fails the play. So round UP to the open, never past it.
-                double openMs = Math.Ceiling(windowStart);
+                var pressTimes = GetPressTimes(line, line.GroupingFor(authoredSyllablesOnly), syllableTiming, charTimedStretch, firstCharTiming, wordShelter, ref lastTime);
 
                 for (int i = 0; i < line.Cells.Count; i++)
                 {
@@ -153,17 +136,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                     if (!cell.IsTypeable)
                         continue;
 
-                    double time = Math.Clamp(perfectTimeFor(line, i), windowStart, windowEnd);
-
-                    // Monotonic, integral (matches live capture; lossless in .osr).
-                    time = Math.Max(Math.Round(Math.Max(time, lastTime)), openMs);
-                    lastTime = time;
-
                     // A freestyle cell accepts any key but space, so the perfect play presses a
                     // fixed letter rather than the authoring marker (which would be rejected, as a
                     // space would); the frame stays inside the a-z surface the .osr mapping is
                     // pinned on, and the marker never reaches the display as a "typed" char.
-                    Frames.Add(new TypeBeatReplayFrame(time, cell.IsFreestyle ? Typeability.FREESTYLE_AUTO_CHAR : cell.Expected));
+                    Frames.Add(new TypeBeatReplayFrame(pressTimes[i], cell.IsFreestyle ? Typeability.FREESTYLE_AUTO_CHAR : cell.Expected));
                 }
             }
 
@@ -184,6 +161,48 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                         earlyFinish: earlyFinish));
                 }
             }
+        }
+
+        /// <summary>
+        /// Autoplay's per-cell schedule, shared with character indicators. Call in line order with
+        /// the same lastTime to preserve monotonic presses across line boundaries.
+        /// Non-typeable cells have no press and retain NaN.
+        /// </summary>
+        internal static double[] GetPressTimes(TypingLine line, SyllableGrouping grouping, bool syllableTiming, bool charTimedStretch,
+                                               bool firstCharTiming, bool wordShelter, ref double lastTime)
+        {
+            // The line is typeable in [ActivationTime, EndTime + SealGraceMs); keep a margin
+            // before the deadline so a boundary-pinned target is still pressed while typeable.
+            double windowStart = line.ActivationTime;
+            double windowEnd = Math.Max(windowStart, line.EndTime + line.SealGraceMs - seal_margin_ms);
+
+            // Integral millisecond at which the line is genuinely open. Real maps carry
+            // fractional times, and a line's activation is routinely its exact StartTime (which
+            // IS the previous line's EndTime, the decoder makes the windows contiguous). Rounding
+            // such a target DOWN, even by a fraction of a millisecond, moves the press to the
+            // wrong side of that boundary: the previous line has not sealed yet, so it is still
+            // the active one, it is already fully typed, and TypingEngine.ProcessKey answers a
+            // complete line by doing nothing at all. The press vanishes with no judgement and no
+            // rejection, and every remaining press on the new line lands one cell early. On an
+            // all-freestyle line the drift is invisible (any key matches) right up to the first
+            // space cell, where autoplay's space hits a freestyle cell (which rejects space) and
+            // its letters then hit the space cell, rejected over and over until the mash guard
+            // fails the play. So round UP to the open, never past it.
+            double openMs = Math.Ceiling(windowStart);
+
+            var times = new double[line.Cells.Count];
+            for (int i = 0; i < line.Cells.Count; i++)
+            {
+                times[i] = double.NaN;
+                if (!line.Cells[i].IsTypeable)
+                    continue;
+
+                double time = Math.Clamp(perfectTimeFor(line, i, grouping, syllableTiming, charTimedStretch, firstCharTiming, wordShelter), windowStart, windowEnd);
+                // Monotonic, integral (matches live capture; lossless in .osr).
+                time = Math.Max(Math.Round(Math.Max(time, lastTime)), openMs);
+                times[i] = lastTime = time;
+            }
+            return times;
         }
 
         /// <summary>
@@ -225,7 +244,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
         /// millisecond against the game's Great window (150 ms, one ladder for every cell) is not
         /// a judgement anyone can lose.</para>
         /// </summary>
-        private double perfectTimeFor(TypingLine line, int cellIndex)
+        private static double perfectTimeFor(TypingLine line, int cellIndex, SyllableGrouping grouping, bool syllableTiming, bool charTimedStretch,
+                                             bool firstCharTiming, bool wordShelter)
         {
             double target = line.Cells[cellIndex].TargetTime;
 
@@ -234,8 +254,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
 
             // The grouping the grading engine reads (backlog 363), which is also what decides the
             // stretch runs.
-            SyllableGrouping grouping = line.GroupingFor(authoredSyllablesOnly);
-
             if (charTimedStretch && grouping.IsCharTimedStretch(cellIndex))
                 return target;
 

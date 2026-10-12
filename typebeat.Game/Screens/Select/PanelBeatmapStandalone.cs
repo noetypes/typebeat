@@ -232,7 +232,7 @@ namespace typebeat.Game.Screens.Select
             artistText.Text = new RomanisableString(beatmapSet.Metadata.ArtistUnicode, beatmapSet.Metadata.Artist);
             updateButton.BeatmapSet = beatmapSet;
             statusPill.Status = beatmap.Status;
-            difficultyTags.Tags = beatmap.DifficultyTags;
+            difficultyTags.Info = beatmap.DifficultyTagInfo;
 
             difficultyIcon.Icon = beatmap.Ruleset.CreateInstance().CreateIcon();
             difficultyIcon.Show();

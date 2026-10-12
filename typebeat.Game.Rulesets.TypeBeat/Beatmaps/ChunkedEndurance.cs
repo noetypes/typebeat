@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using typebeat.Game.Utils;
 
 namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
 {
@@ -52,6 +53,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
     {
         internal const double short_profile_seconds = 5;
         internal const double sustained_profile_seconds = 20;
+        internal const double stamina_profile_seconds = 45;
 
         internal const string merge_off = "off";
         internal const string merge_pairs = "pairs";
@@ -182,6 +184,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             /// the exact cap.
             /// </summary>
             public double overlap_max_seconds { get; init; } = 60.75;
+
+            /// <summary>Use the playable map duration as the horizon and test its exact full span.</summary>
+            public bool overlap_whole_map { get; init; }
             public double overlap_samples { get; init; } = 4;
 
             /// <summary>
@@ -199,6 +204,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
         /// change it here, regenerate the catalogue fixture, and bump the difficulty version.
         /// </summary>
         internal static readonly Settings Live = new Settings();
+
+        /// <summary>Local dev calibration; Release keeps the published settings above.</summary>
+        internal static readonly Settings Development = Live with { overlap_whole_map = true, chunk_length_scale = 2000 };
+
+        internal static Settings Active => DevelopmentFeatures.ExperimentalDifficulty ? Development : Live;
 
         /// <summary>
         /// The scale one window's typability puts on the capability curve, exactly 1 when the snapshot
@@ -371,6 +381,26 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
 
             /// <summary>Peak SR strain in fully supported sustained windows, for content tags.</summary>
             public double SustainedWindowPeak { get; init; }
+
+            public WindowProfile HardestWindow { get; init; }
+            public WindowProfile WholeMapWindow { get; init; }
+            public IReadOnlyList<double> OverlapWindowDurations { get; init; } = Array.Empty<double>();
+            public WindowProfile ShortWindow { get; init; }
+            public WindowProfile SustainedWindow { get; init; }
+            public WindowProfile StaminaWindow { get; init; }
+            public double DurationSeconds { get; init; }
+            public double WholeMapRhythmMultiplier { get; init; } = 1;
+            public double HardestWindowRhythmMultiplier { get; init; } = 1;
+
+            /// <summary>Unsaturated forced pace-change load per second, for the rhythm display scale.</summary>
+            public double WholeMapRhythmLoadPerSecond { get; init; }
+            public double HardestWindowRhythmLoadPerSecond { get; init; }
+        }
+
+        /// <summary>A window measured by the SR scan, retained for difficulty-tag explanations.</summary>
+        internal readonly record struct WindowProfile(double StartMs, double EndMs, double Strain, double Wpm)
+        {
+            public double Seconds => (EndMs - StartMs) / 1000;
         }
 
         /// <summary>One chunk of the layout, in playback milliseconds from the map's first word.</summary>
@@ -796,16 +826,49 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             List<Row>? overlappingRows = null;
 
             double shortWindowPeak = 0, longerWindowPeak = 0, sustainedWindowPeak = 0;
+            WindowProfile shortWindow = default, sustainedWindow = default, staminaWindow = default;
+            WindowProfile hardestWindow = default, wholeMapWindow = default;
+            double[] overlapWindowDurations = Array.Empty<double>();
+            double hardestWindowPeak = 0, hardestWindowRhythmMultiplier = 1;
+            double mapEnd = words.Max(word => word.End);
+
+            WindowProfile DescribeWindow(double from, double to, double strain)
+                => new WindowProfile(from, to, strain, timeline.MassBetween(from, to) * 12 / ((to - from) / 1000));
+
+            void RecordWindow(double from, double to, double value)
+            {
+                double seconds = (to - from) / 1000;
+                if (value > hardestWindowPeak)
+                {
+                    hardestWindowPeak = value;
+                    hardestWindow = DescribeWindow(from, to, value);
+                    hardestWindowRhythmMultiplier = RhythmBoost(load, from, to, seconds, settings);
+                }
+                if (seconds <= short_profile_seconds && value > shortWindowPeak)
+                {
+                    shortWindowPeak = value;
+                    shortWindow = DescribeWindow(from, to, value);
+                }
+                if (from >= t0 && to <= mapEnd)
+                {
+                    if (seconds > short_profile_seconds)
+                        longerWindowPeak = Math.Max(longerWindowPeak, value);
+                    if (seconds >= sustained_profile_seconds && value > sustainedWindowPeak)
+                    {
+                        sustainedWindowPeak = value;
+                        sustainedWindow = DescribeWindow(from, to, value);
+                    }
+                    if (seconds > stamina_profile_seconds && value > staminaWindow.Strain)
+                        staminaWindow = DescribeWindow(from, to, value);
+                }
+            }
 
             if (overlapping)
             {
-                double mapEnd = t0;
-
-                foreach (LyricDifficulty.Word word in words)
-                    mapEnd = Math.Max(mapEnd, word.End);
-
                 double baseMs = span;
-                double maxMs = Math.Max(baseMs, Math.Min(120, Math.Max(1, settings.overlap_max_seconds)) * 1000);
+                double maxMs = settings.overlap_whole_map
+                    ? Math.Max(baseMs, mapEnd - t0)
+                    : Math.Max(baseMs, Math.Min(120, Math.Max(1, settings.overlap_max_seconds)) * 1000);
                 int subdivisions = Math.Max(1, Math.Min(8, (int)Math.Round(settings.overlap_samples)));
                 double stepMs = baseMs / subdivisions;
 
@@ -816,6 +879,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
 
                 if (maxMs > baseMs + 1e-6)
                     durations.Add(maxMs);
+
+                overlapWindowDurations = durations.Select(ms => ms / 1000).ToArray();
+                double wholeMapStrain = 0, wholeMapPlain = 0;
+                // Three sample placements need not land on both map edges. Test the full map
+                // explicitly once, preserving the base-duration floor for very short maps.
+                if (settings.overlap_whole_map && mapEnd - t0 >= baseMs)
+                {
+                    wholeMapStrain = ChunkStrain(t0, mapEnd, true);
+                    wholeMapPlain = ChunkStrain(t0, mapEnd, false);
+                    wholeMapWindow = DescribeWindow(t0, mapEnd, wholeMapStrain);
+                    RecordWindow(t0, mapEnd, wholeMapStrain);
+                }
 
                 overlappingRows = new List<Row>();
 
@@ -834,15 +909,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                             double from = centre - duration * position, to = from + duration;
                             double value = ChunkStrain(from, to, true);
 
-                            if (duration / 1000 <= short_profile_seconds)
-                                shortWindowPeak = Math.Max(shortWindowPeak, value);
-                            if (from >= t0 && to <= mapEnd)
-                            {
-                                if (duration / 1000 > short_profile_seconds)
-                                    longerWindowPeak = Math.Max(longerWindowPeak, value);
-                                if (duration / 1000 >= sustained_profile_seconds)
-                                    sustainedWindowPeak = Math.Max(sustainedWindowPeak, value);
-                            }
+                            RecordWindow(from, to, value);
 
                             if (value > strain)
                             {
@@ -854,6 +921,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                             plain = Math.Max(plain, ChunkStrain(from, to, false));
                         }
                     }
+
+                    if (wholeMapStrain > strain)
+                    {
+                        strain = wholeMapStrain;
+                        windowStart = t0;
+                        windowSeconds = (mapEnd - t0) / 1000;
+                    }
+                    plain = Math.Max(plain, wholeMapPlain);
 
                     overlappingRows.Add(new Row
                     {
@@ -1516,6 +1591,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 ShortWindowPeak = shortWindowPeak,
                 LongerWindowPeak = longerWindowPeak,
                 SustainedWindowPeak = sustainedWindowPeak,
+                HardestWindow = hardestWindow,
+                WholeMapWindow = wholeMapWindow,
+                OverlapWindowDurations = overlapWindowDurations,
+                ShortWindow = shortWindow,
+                SustainedWindow = sustainedWindow,
+                StaminaWindow = staminaWindow,
+                DurationSeconds = (mapEnd - t0) / 1000,
+                WholeMapRhythmMultiplier = RhythmBoost(load, t0, mapEnd, (mapEnd - t0) / 1000, settings),
+                HardestWindowRhythmMultiplier = hardestWindowRhythmMultiplier,
+                WholeMapRhythmLoadPerSecond = load.LoadBetween(t0, mapEnd) / Math.Max(1e-9, (mapEnd - t0) / 1000),
+                HardestWindowRhythmLoadPerSecond = hardestWindow.Seconds > 0
+                    ? load.LoadBetween(hardestWindow.StartMs, hardestWindow.EndMs) / hardestWindow.Seconds : 0,
                 Chunks = rows.Select(row => new Chunk(row.A, row.B, row.Strain, row.Plain, row.Merged, row.Sealed)).ToArray(),
             };
         }

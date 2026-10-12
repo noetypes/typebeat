@@ -271,7 +271,7 @@ namespace typebeat.Game.Screens.Select
                 return;
 
             var current = working.Value;
-            difficultyTags.Tags = current.BeatmapInfo.DifficultyTags;
+            difficultyTags.Info = current.BeatmapInfo.DifficultyTagInfo;
             if (current is DummyWorkingBeatmap || current.BeatmapInfo.DifficultyTagsVersion >= StoredBeatmapFacts.DIFFICULTY_TAGS_VERSION)
                 return;
 
@@ -279,10 +279,10 @@ namespace typebeat.Game.Screens.Select
             var token = difficultyTagsCancellationSource.Token;
             Task.Run(() =>
             {
-                BeatmapDifficultyTags tags;
+                BeatmapDifficultyTagInfo tags;
                 try
                 {
-                    tags = StoredBeatmapFacts.ComputeDifficultyTags(current);
+                    tags = StoredBeatmapFacts.ComputeDifficultyTagInfo(current);
                 }
                 catch (Exception e)
                 {
@@ -292,7 +292,7 @@ namespace typebeat.Game.Screens.Select
                 Schedule(() =>
                 {
                     if (!token.IsCancellationRequested && working.Value == current)
-                        difficultyTags.Tags = tags;
+                        difficultyTags.Info = tags;
                 });
             }, token);
         }

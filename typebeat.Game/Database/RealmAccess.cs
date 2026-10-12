@@ -153,7 +153,8 @@ namespace typebeat.Game.Database
         ///                    copied by the detach mapper, so the carousel sees the real value.
         /// </summary>
         // 65: cached content difficulty tags; the default version 0 queues existing maps for classification.
-        private const int schema_version = 65;
+        // 66: cached WPM and duration of the SR windows responsible for timing tags.
+        private const int schema_version = 66;
 
         /// <summary>
         /// Lock object which is held during <see cref="BlockAllOperations"/> sections, blocking realm retrieval during blocking periods.

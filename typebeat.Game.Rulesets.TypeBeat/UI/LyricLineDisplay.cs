@@ -305,6 +305,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         private readonly float[] indicatorRelease;
         private JudgementIndicatorMode judgementIndicator;
         private bool approachBarsEnabled;
+        private bool characterIndicatorTiming;
+        private double[] autoplayHitTimes = Array.Empty<double>();
         private PaceBarRevealMode paceBarReveal = PaceBarRevealMode.Off;
         private bool judgementColouredBarsEnabled;
         private JudgementColourBar[] judgementColourBars = Array.Empty<JudgementColourBar>();
@@ -1829,11 +1831,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             {
                 var (start, end) = sungSpan(i);
                 double multiplier = windowMultiplier(i);
-                // The bottom-to-top fill rises letter by letter on each cell's own target, kept inside its
-                // syllable's span. Its release stays on the syllable's end, since the whole syllable is
-                // judgeable until then. Fade-in, None, pop-in and approach bars keep the syllable's start.
-                double fillStart = glyphFillMode ? Math.Clamp(Line.Cells[i].TargetTime, start, end) : start;
-                double completion = SyllableFadeInCompletion(fillStart, greatEarly * multiplier, syllableFadeInEnd);
+                double completion = indicatorCompletion(i, glyphFillMode);
                 double approachStart = judgementIndicator == JudgementIndicatorMode.None ? start - greatEarly * multiplier : completion - syllableFadeInDuration;
                 float release = IndicatorRelease(time, end + greatLate * multiplier);
                 bool lit = Line.Cells[i].IsCountable && time >= approachStart && release > 0;
@@ -1849,6 +1847,30 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             }
             sungSyllable = primary;
             updatePaceRail(time);
+        }
+
+        private double indicatorCompletion(int index, bool fill = false)
+        {
+            if (characterIndicatorTiming && index < autoplayHitTimes.Length && !double.IsNaN(autoplayHitTimes[index]))
+                return autoplayHitTimes[index];
+
+            var (start, end) = sungSpan(index);
+            // Bottom-to-top fill uses each character's target; other indicators keep the syllable opening.
+            double fillStart = fill ? Math.Clamp(Line.Cells[index].TargetTime, start, end) : start;
+            return SyllableFadeInCompletion(fillStart, sungGreatEarly * windowMultiplier(index), syllableFadeInEnd);
+        }
+
+        public void SetCharacterIndicatorTiming(bool enabled)
+        {
+            characterIndicatorTiming = enabled;
+            refreshApproach();
+        }
+
+        internal void SetAutoplayHitTimes(double[] times)
+        {
+            autoplayHitTimes = times;
+            if (characterIndicatorTiming)
+                refreshApproach();
         }
 
         private double freestyleWindowMultiplier = SyncWindows.FREESTYLE_WINDOW_SCALE;
@@ -2300,7 +2322,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             if (apply)
             {
                 cells[index].Scale = new Vector2(TextPopInScale(sungTime,
-                    SyllableFadeInCompletion(sungSpan(index).start, sungGreatEarly * windowMultiplier(index), syllableFadeInEnd), textPopInAmount));
+                    indicatorCompletion(index), textPopInAmount));
                 popInApplied[index] = true;
             }
             else if (popInApplied[index])
