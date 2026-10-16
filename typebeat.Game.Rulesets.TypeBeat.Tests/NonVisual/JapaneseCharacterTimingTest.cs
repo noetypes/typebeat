@@ -196,6 +196,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(account.Statistics.GetValueOrDefault(HitResult.Great), Is.EqualTo(1));
             Assert.That(account.Accuracy, Is.EqualTo(1));
             var autoplay = new TypeBeatAutoGenerator(map, authoredSyllablesOnly: true, alignSubdivisionTargets: true).Generate();
+            Assert.That(autoplay.Frames.OfType<TypeBeatReplayFrame>().Where(f => f.IsConfigExtended).Select(f => f.JapaneseInputEra3), Is.Not.Empty.And.All.EqualTo(true));
             account = TypeBeatReplayScorer.Score(map, new Mod[] { mod }, autoplay, TypoRule.Deferred, ComboRestoreRule.OnFix);
             Assert.That(account.MaximumStatistics.GetValueOrDefault(HitResult.Great), Is.EqualTo(2));
             Assert.That(account.Statistics.GetValueOrDefault(HitResult.Great), Is.EqualTo(2));

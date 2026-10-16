@@ -182,12 +182,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                 // that trim, so does this header, and the watch path primes from the first header it
                 // finds, so the surviving presses are judged on the grouping they were made for.
                 Frames.Insert(Frames.Count - 1, TypeBeatReplayFrame.CreateExtendedConfigFrame(Frames[^1].Time, authoredSyllablesOnly: authoredSyllablesOnly, alignSubdivisionTargets: alignSubdivisionTargets,
-                    earlyFinish: earlyFinish, japaneseCharacterTiming: japanese, japaneseRomajiInput: japanese, japaneseInputEra2: japanese));
+                    earlyFinish: earlyFinish, japaneseCharacterTiming: japanese, japaneseRomajiInput: japanese, japaneseInputEra2: japanese, japaneseInputEra3: japanese));
 
                 if (Frames.Count > 2)
                 {
                     Frames.Insert(0, TypeBeatReplayFrame.CreateExtendedConfigFrame(Frames[0].Time, authoredSyllablesOnly: authoredSyllablesOnly, alignSubdivisionTargets: alignSubdivisionTargets,
-                        earlyFinish: earlyFinish, japaneseCharacterTiming: japanese, japaneseRomajiInput: japanese, japaneseInputEra2: japanese));
+                        earlyFinish: earlyFinish, japaneseCharacterTiming: japanese, japaneseRomajiInput: japanese, japaneseInputEra2: japanese, japaneseInputEra3: japanese));
                 }
             }
         }

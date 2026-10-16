@@ -231,7 +231,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         private bool japanese;
         private LyricLine? japaneseAuthoredLine;
         private JapaneseInputPlan? japaneseInput;
-        internal JapaneseInputPlan? JapaneseInput => japanese ? japaneseInput ??= JapaneseInputPlan.Create(DisplayText, japaneseAuthoredLine, japaneseWordTiming, japaneseCharacterTiming) : null;
+        private bool japaneseInputEra3 = true;
+        internal JapaneseInputPlan? JapaneseInput => japanese ? japaneseInput ??= JapaneseInputPlan.Create(DisplayText, japaneseAuthoredLine, japaneseWordTiming, era3: japaneseInputEra3, characterTiming: japaneseCharacterTiming) : null;
+
+        /// <summary>Select the romaji input plan's era (see <see cref="TypingEngine.JapaneseInputEra3"/>) on the same cells.</summary>
+        internal void SetJapaneseInputEra3(bool enabled)
+        {
+            if (japaneseInputEra3 == enabled)
+                return;
+
+            japaneseInputEra3 = enabled;
+            japaneseInput = null;
+        }
 
         public IReadOnlyList<TypingCell> Cells { get; }
 
