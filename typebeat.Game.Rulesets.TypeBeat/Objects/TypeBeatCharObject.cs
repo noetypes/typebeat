@@ -23,8 +23,15 @@ namespace typebeat.Game.Rulesets.TypeBeat.Objects
 
         /// <summary>The normalized display char this cell expects.</summary>
         public char Expected { get; set; }
+        public int Phase { get; set; }
+        public bool ScoringEnabled { get; set; } = true;
 
-        public override Rulesets.Judgements.Judgement CreateJudgement() => new TypeBeatCharJudgement();
+        public override Rulesets.Judgements.Judgement CreateJudgement() => new CharacterPhaseJudgement(this);
+
+        private sealed class CharacterPhaseJudgement(TypeBeatCharObject owner) : TypeBeatCharJudgement
+        {
+            public override HitResult MaxResult => owner.ScoringEnabled ? HitResult.Great : HitResult.IgnoreHit;
+        }
 
         protected override HitWindows CreateHitWindows() => new TypeBeatHitWindows(Typeability.IsFreestyle(Expected));
     }

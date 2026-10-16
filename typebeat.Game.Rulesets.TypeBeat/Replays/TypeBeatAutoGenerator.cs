@@ -119,15 +119,17 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                 return;
 
             double lastTime = double.NegativeInfinity;
+            bool japanese = lineObjects.Any(l => l.Polyglot && JapaneseReading.IsJapanese(l.PolyglotLanguage));
 
             foreach (var lineObject in lineObjects)
             {
                 // A Polyglot play (backlog 331) is stamped on the line objects by the mod, so the frames
                 // follow the original-script cells the engine will judge.
-                var line = TypingLine.ForMods(lineObject.Line, literate, lineObject.Polyglot, lineObject.PolyglotLanguage);
+                var line = TypingLine.ForMods(lineObject.Line, literate, lineObject.Polyglot, lineObject.PolyglotLanguage, japaneseCharacterTiming: japanese);
                 line.SetAlignedSubdivisionTargets(alignSubdivisionTargets);
 
-                var pressTimes = GetPressTimes(line, line.GroupingFor(authoredSyllablesOnly), syllableTiming, charTimedStretch, firstCharTiming, wordShelter, ref lastTime);
+                var pressTimes = japanese ? line.Cells.Select(c => c.TargetTime).ToArray()
+                    : GetPressTimes(line, line.GroupingFor(authoredSyllablesOnly), syllableTiming, charTimedStretch, firstCharTiming, wordShelter, ref lastTime);
 
                 for (int i = 0; i < line.Cells.Count; i++)
                 {
@@ -136,6 +138,33 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                     if (!cell.IsTypeable)
                         continue;
 
+                    if (japanese && line.JapaneseInput?.AtForInput(i) is { } group)
+                    {
+                        var plan = line.JapaneseInput;
+                        string? input = JapaneseRomaji.CompleteInput(group.Reading, plan.Following(group));
+                        int[]? ends = input == null ? null : JapaneseRomaji.InputEnds(group.Reading, input, plan.Following(group));
+                        if (input != null && ends != null)
+                        {
+                            int readingOffset = 0, inputOffset = 0;
+                            for (int c = i; c < group.EndCellExclusive; c++)
+                            {
+                                string reading = plan.CharacterReadingAt(c) ?? "";
+                                readingOffset += reading.Length;
+                                int inputEnd = c == group.EndCellExclusive - 1 ? input.Length : readingOffset > 0 && readingOffset <= ends.Length ? ends[readingOffset - 1] : inputOffset;
+                                double start = line.Cells[c].TargetTime;
+                                double end = line.Cells[c].EndTargetTime ?? start;
+                                for (int key = inputOffset; key < inputEnd; key++)
+                                {
+                                    double time = start + (end - start) * (key - inputOffset) / Math.Max(1, inputEnd - inputOffset - 1);
+                                    lastTime = Math.Max(lastTime, time);
+                                    Frames.Add(new TypeBeatReplayFrame(lastTime, input[key]));
+                                }
+                                inputOffset = inputEnd;
+                            }
+                            i = group.EndCellExclusive - 1;
+                            continue;
+                        }
+                    }
                     // A freestyle cell accepts any key but space, so the perfect play presses a
                     // fixed letter rather than the authoring marker (which would be rejected, as a
                     // space would); the frame stays inside the a-z surface the .osr mapping is
@@ -144,7 +173,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                 }
             }
 
-            if ((authoredSyllablesOnly || alignSubdivisionTargets || earlyFinish) && Frames.Count > 0)
+            if ((authoredSyllablesOnly || alignSubdivisionTargets || earlyFinish || japanese) && Frames.Count > 0)
             {
                 // The era header (see the constructor), immediately ahead of the LAST press and at its
                 // time, and again ahead of the first. The first lands it before any keystroke a play
@@ -153,12 +182,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                 // that trim, so does this header, and the watch path primes from the first header it
                 // finds, so the surviving presses are judged on the grouping they were made for.
                 Frames.Insert(Frames.Count - 1, TypeBeatReplayFrame.CreateExtendedConfigFrame(Frames[^1].Time, authoredSyllablesOnly: authoredSyllablesOnly, alignSubdivisionTargets: alignSubdivisionTargets,
-                    earlyFinish: earlyFinish));
+                    earlyFinish: earlyFinish, japaneseCharacterTiming: japanese, japaneseRomajiInput: japanese, japaneseInputEra2: japanese));
 
                 if (Frames.Count > 2)
                 {
                     Frames.Insert(0, TypeBeatReplayFrame.CreateExtendedConfigFrame(Frames[0].Time, authoredSyllablesOnly: authoredSyllablesOnly, alignSubdivisionTargets: alignSubdivisionTargets,
-                        earlyFinish: earlyFinish));
+                        earlyFinish: earlyFinish, japaneseCharacterTiming: japanese, japaneseRomajiInput: japanese, japaneseInputEra2: japanese));
                 }
             }
         }

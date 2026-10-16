@@ -4,7 +4,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using typebeat.Game.Utils;
 
 namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
 {
@@ -38,8 +37,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
     ///
     /// <para>WHAT IT DOES NOT READ. The peak-window scan, the envelope sweep, the strain
     /// accumulation, the catch-up walk, stamina and the burst window. The chunked rating is
-    /// <c>anchor x score x (1 + length bonus)</c> and nothing else; porting the rest "for
-    /// completeness" is what made the sandbox slow.</para>
+    /// <c>anchor x score x (1 + length bonus)</c>, followed by the whole-map typability bonus in
+    /// <see cref="LyricDifficulty.RateChunked"/>.</para>
     ///
     /// <para>ONE INPUT THE ENVELOPE MODEL DOES NOT HAVE. A chunk's strain is multiplied by the
     /// rhythm boost INSIDE that window, read off a load prefix over the map's own keypress stream
@@ -108,9 +107,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             /// THE SHIFT SURCHARGE, and it is DEMAND ONLY. Under Literate a capital is Shift plus the
             /// letter, and the press walk charges exactly that; this axis read its cells straight from
             /// the word builder, where a capital is still one character, so without this dial the rating
-            /// the game actually ships priced a capital at one input. The cost is charged once per RUN
-            /// of capitals or shifted marks, because the key is held across it ("USA" is one Shift,
-            /// "A B" two) - see <see cref="ShiftSurcharge"/>.
+            /// the game actually ships priced a capital at one input. Capitals share a charge while
+            /// Shift is held. Each shifted symbol pays a charge unless it repeats the immediately
+            /// preceding symbol ("^%$" pays three, "!!!" one) - see <see cref="ShiftSurcharge"/>.
             ///
             /// <para>It reaches the chunk strain's NUMERATOR and nothing else: deliberately not the
             /// character counts, so the length bonus and the difficult-character figure a miss is
@@ -205,10 +204,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
         /// </summary>
         internal static readonly Settings Live = new Settings();
 
-        /// <summary>Local dev calibration; Release keeps the published settings above.</summary>
+        /// <summary>Experimental calibration retained for explicit sandbox comparisons.</summary>
         internal static readonly Settings Development = Live with { overlap_whole_map = true, chunk_length_scale = 2000 };
 
-        internal static Settings Active => DevelopmentFeatures.ExperimentalDifficulty ? Development : Live;
+        internal static Settings Active => Live;
 
         /// <summary>
         /// The scale one window's typability puts on the capability curve, exactly 1 when the snapshot
@@ -360,8 +359,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             /// </summary>
             public required double Load { get; init; }
 
-            /// <summary><c>anchor x score x (1 + length bonus)</c>, the axis's star figure.</summary>
+            /// <summary>The axis's star figure, including the final whole-map typability bonus when applied by the caller.</summary>
             public required double Stars { get; init; }
+
+            /// <summary>Final SR bonus for negative whole-map typability, applied after length credit.</summary>
+            public double WholeMapTypabilityMultiplier { get; init; } = 1;
 
             /// <summary>The rating against the same model with the boost neutralised.</summary>
             public required double RhythmMultiplier { get; init; }
@@ -434,11 +436,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
         private static bool IsShiftedMark(char c) => SHIFTED_CANDIDATES.IndexOf(c) >= 0 && Typeability.IsPunctuation(c);
 
         /// <summary>
-        /// How many Shift keypresses a token costs under Literate, at <paramref name="cost"/> each: one
-        /// per RUN of capitals or shifted marks, because the key is held across the run ("USA" pays one,
-        /// "A B" pays two - the unshifted space resets it). A freestyle slot matches any key, so it
-        /// never pays, and nothing is charged at all without the Literate mod, whose stream is the one
-        /// that carries capitals and marks (see <see cref="Settings.shift_cost"/>).
+        /// How many Shift keypresses a token costs under Literate, at <paramref name="cost"/> each.
+        /// Each shifted symbol pays unless the preceding played character is the same symbol.
+        /// Capitals share a charge while Shift is held ("USA" pays one, "A B" two).
+        /// Freestyle slots never pay. Nothing is charged without Literate.
         /// </summary>
         internal static double ShiftSurcharge(string token, bool literate, double cost)
         {
@@ -447,21 +448,24 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
 
             double charges = 0;
             bool held = false;
+            char previous = '\0';
 
             foreach (char c in token)
             {
                 // Only the characters the stream can actually put on a cell carry a flag: everything
                 // else (the syllable-split marker, junk a normalizer let through) is skipped WITHOUT
-                // releasing Shift, exactly as the sandbox's shiftPressFlags skips it.
+                // releasing Shift or interrupting a repeated symbol.
                 if (!Typeability.IsTypeable(c) && !Typeability.IsFreestyle(c) && !Typeability.IsPunctuation(c))
                     continue;
 
-                bool needs = !Typeability.IsFreestyle(c) && ((c >= 'A' && c <= 'Z') || IsShiftedMark(c));
+                bool shiftedMark = IsShiftedMark(c);
+                bool needs = !Typeability.IsFreestyle(c) && ((c >= 'A' && c <= 'Z') || shiftedMark);
 
-                if (needs && !held)
+                if (shiftedMark ? previous != c : needs && !held)
                     charges += cost;
 
                 held = needs;
+                previous = c;
             }
 
             return charges;
@@ -615,9 +619,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
         /// <summary>
         /// THE SHIFT SURCHARGE's prefix, the sandbox's <c>preShift</c>: one word's own Shift keypresses
         /// (see <see cref="ShiftSurcharge"/>) spread across the word's span on the timeline's bin grid,
-        /// so any candidate window can read the surcharge it holds in O(1). Null - the whole feature
-        /// switched off - unless the play is Literate and the dial is on, which is what keeps it
-        /// invisible to a default-stream reading and to every fixture taken at one.
+        /// plus Polyglot composition keys at the same per-key cost. Candidate windows read this
+        /// extra demand in O(1); scoring-cell counts are unaffected. Ordinary default-stream
+        /// readings carry no extra inputs, preserving their existing ratings.
         /// </summary>
         internal static double[]? BuildShiftPrefix(
             IReadOnlyList<LyricDifficulty.Word> words,
@@ -626,14 +630,15 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             bool literate,
             Settings settings)
         {
-            if (!literate || !(settings.shift_cost > 0) || words.Count == 0 || binCount <= 0)
+            if (!(settings.shift_cost > 0) || words.Count == 0 || binCount <= 0
+                || !literate && words.All(w => w.ExtraInputs == 0))
                 return null;
 
             var density = new double[binCount];
 
             foreach (LyricDifficulty.Word word in words)
             {
-                double surcharge = ShiftSurcharge(word.Token, true, settings.shift_cost);
+                double surcharge = ShiftSurcharge(word.Token, literate, settings.shift_cost) + word.ExtraInputs * settings.shift_cost;
 
                 if (!(surcharge > 0))
                     continue;

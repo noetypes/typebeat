@@ -563,7 +563,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                 if (cellWasDueBeforeThePlayStarted(line, cellIndex))
                     return line.CellAt(cellIndex)!.HitObject.Judgement.MaxResult;
 
-                var result = TypeBeatResultMapping.UnresolvedCellResult(Engine.CellLeftWrong(sealResult.LineIndex, cellIndex), TypoRule.Deferred);
+                var result = Engine.IsJapaneseCharacter(sealResult.LineIndex, cellIndex)
+                    ? HitResult.Miss
+                    : TypeBeatResultMapping.UnresolvedCellResult(Engine.CellLeftWrong(sealResult.LineIndex, cellIndex), TypoRule.Deferred);
 
                 if (result == TypeBeatResultMapping.UNFIXED_TYPO || (backDated && result == TypeBeatResultMapping.SEAL_MISS))
                     (scoreProcessor as TypeBeatScoreProcessor)?.MarkComboNeutral(sealResult.LineIndex, cellIndex);
@@ -697,7 +699,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             /// replay's headers selected (backlog 363: above all the grouping, which the lyric stack
             /// re-lays when it flips back).
             /// </summary>
-            private (bool RushCapCostsAccuracy, bool InputEra2, bool AuthoredSyllablesOnly, bool AlignSubdivisionTargets, bool EarlyFinish, bool JapaneseRomajiInput, bool JapaneseWordTiming, bool JapaneseInputEra2, bool JapaneseWordSkip)? liveExtendedEras;
+            private (bool RushCapCostsAccuracy, bool InputEra2, bool AuthoredSyllablesOnly, bool AlignSubdivisionTargets, bool EarlyFinish, bool JapaneseRomajiInput, bool JapaneseWordTiming, bool JapaneseInputEra2, bool JapaneseWordSkip, bool JapaneseCharacterTiming)? liveExtendedEras;
             private int nextFrameIndex;
 
             /// <summary>
@@ -736,7 +738,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                     // The replay can be swapped mid-play (editor autoplay toggle); restart feeding.
                     if (!ReferenceEquals(replay, activeReplay))
                     {
-                        liveExtendedEras ??= (engine.RushCapCostsAccuracy, engine.InputEra2, engine.AuthoredSyllablesOnly, engine.AlignSubdivisionTargets, engine.EarlyFinish, engine.JapaneseRomajiInput, engine.JapaneseWordTiming, engine.JapaneseInputEra2, engine.JapaneseWordSkip);
+                        liveExtendedEras ??= (engine.RushCapCostsAccuracy, engine.InputEra2, engine.AuthoredSyllablesOnly, engine.AlignSubdivisionTargets, engine.EarlyFinish, engine.JapaneseRomajiInput, engine.JapaneseWordTiming, engine.JapaneseInputEra2, engine.JapaneseWordSkip, engine.JapaneseCharacterTiming);
                         activeReplay = replay;
                         nextFrameIndex = 0;
                         lastFedTime = double.NegativeInfinity;
@@ -820,6 +822,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                         engine.JapaneseWordTiming = live.JapaneseWordTiming;
                         engine.JapaneseInputEra2 = live.JapaneseInputEra2;
                         engine.JapaneseWordSkip = live.JapaneseWordSkip;
+                        engine.JapaneseCharacterTiming = live.JapaneseCharacterTiming;
                     }
 
                     liveExtendedEras = null;

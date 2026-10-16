@@ -840,11 +840,16 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                         {
                             sum += WindowsFor(cell).SyncQuality(d);
                             resolved++;
+                            if (JapaneseCharacterTiming && cell.FirstEndDelta is double endDelta)
+                            {
+                                sum += WindowsFor(cell).SyncQuality(endDelta);
+                                resolved++;
+                            }
                         }
                         else if (lineSealed[i])
                         {
                             // Missed / still-Wrong at seal: q = 0.
-                            resolved++;
+                            resolved += JapaneseCharacterTiming && cell.EndTargetTime.HasValue ? 2 : 1;
                         }
                     }
                 }
@@ -1022,6 +1027,27 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// <summary>Extended replay bit 8: Space skips the remainder of the authored Japanese word.</summary>
         public bool JapaneseWordSkip { get; set; } = true;
 
+        private bool japaneseCharacterTiming = true;
+        public bool JapaneseCharacterTiming
+        {
+            get => japaneseCharacterTiming;
+            set
+            {
+                if (japaneseCharacterTiming == value)
+                    return;
+                japaneseCharacterTiming = value;
+                foreach (var line in lines)
+                    line.SetJapaneseCharacterTiming(value);
+                clearJapanesePending();
+                rebuildCountableTargets();
+                countTimedCells();
+                JapaneseWordTimingChanged?.Invoke();
+            }
+        }
+
+        public bool IsJapaneseCharacter(int lineIndex, int cellIndex)
+            => JapaneseCharacterTiming && UsesJapaneseRomaji && lines[lineIndex].JapaneseInput?.IsJapaneseCell(cellIndex) == true;
+
         private bool UsesJapaneseKeystrokeWpm => JapaneseInputEra2 && JapaneseRomajiInput && UsesJapaneseRomaji;
         private int japaneseWpmInputs;
         private int japaneseCompletionLine = -1;
@@ -1045,6 +1071,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         private int japanesePendingLine = -1;
         private int japanesePendingCell = -1;
         private double japanesePendingTime;
+        private double japanesePendingStartTime;
+        private readonly List<double> japanesePendingTimes = new List<double>();
+        private double? japaneseCommitEndTime;
         private bool committingJapanese;
 
         public string JapanesePending => japanesePendingLine == activeLineIndex && japanesePendingCell == caretIndex
@@ -1053,6 +1082,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         private void clearJapanesePending()
         {
             japanesePending = string.Empty;
+            japanesePendingTimes.Clear();
             japanesePendingLine = japanesePendingCell = -1;
         }
 
@@ -1164,6 +1194,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             }
 
             recordJapaneseInput();
+            if (japanesePending.Length == 0)
+                japanesePendingStartTime = time;
+            japanesePendingTimes.Add(time);
             japanesePending = input;
             japanesePendingLine = activeLineIndex;
             japanesePendingCell = caretIndex;
@@ -1177,6 +1210,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         {
             int lineIndex = activeLineIndex;
             int startCell = caretIndex;
+            double startTime = japanesePending.Length > 0 ? japanesePendingStartTime : time;
+            double[] inputTimes = japanesePendingTimes.ToArray();
+            var plan = lines[lineIndex].JapaneseInput!;
+            int[]? inputEnds = JapaneseRomaji.InputEnds(group.Reading, japanesePending, plan.Following(group));
+            int readingOffset = 0, inputOffset = 0;
             clearJapanesePending();
             committingJapanese = true;
             try
@@ -1184,7 +1222,19 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 while (activeLineIndex == lineIndex && caretIndex < group.EndCellExclusive)
                 {
                     int before = caretIndex;
-                    ProcessKey(lines[lineIndex].Cells[caretIndex].Expected, time);
+                    double cellStart = startTime, cellEnd = time;
+                    string? characterReading = plan.CharacterReadingAt(caretIndex);
+                    if (JapaneseCharacterTiming && inputEnds != null && characterReading != null
+                        && readingOffset + characterReading.Length <= inputEnds.Length && inputTimes.Length > 0)
+                    {
+                        int endInput = inputEnds[readingOffset + characterReading.Length - 1];
+                        cellStart = inputTimes[Math.Min(inputOffset, inputTimes.Length - 1)];
+                        cellEnd = inputTimes[Math.Min(endInput - 1, inputTimes.Length - 1)];
+                        readingOffset += characterReading.Length;
+                        inputOffset = endInput;
+                    }
+                    japaneseCommitEndTime = cellEnd;
+                    ProcessKey(lines[lineIndex].Cells[caretIndex].Expected, JapaneseCharacterTiming ? cellStart : time);
                     if (caretIndex == before && activeLineIndex == lineIndex)
                         break;
                 }
@@ -1192,6 +1242,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             finally
             {
                 committingJapanese = false;
+                japaneseCommitEndTime = null;
                 if (JapaneseInputEra2 && (activeLineIndex != lineIndex || caretIndex != startCell))
                     protectJapaneseCompletion();
             }
@@ -2120,7 +2171,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             lines = new List<TypingLine>(beatmap.Lines.Count);
 
             foreach (var line in beatmap.Lines)
-                lines.Add(TypingLine.ForMods(line, literate, polyglot, polyglotLanguage));
+                lines.Add(TypingLine.ForMods(line, literate, polyglot, polyglotLanguage, japaneseCharacterTiming: true));
 
             lineSealed = new bool[lines.Count];
             lineAbandoned = new bool[lines.Count];
@@ -2272,6 +2323,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                     cell.JudgedDelta = null;
                     cell.JudgedTier = null;
                     cell.FirstCorrectDelta = null;
+                    cell.FirstEndDelta = null;
+                    cell.EndJudgedTier = null;
 
                     // The one place backlog 210's correction flag is ever cleared: it survives a
                     // backspace by design, so only a whole-run rebuild puts it back.
@@ -2478,6 +2531,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                     if (cell.State == CellState.Wrong)
                         cell.JudgedTier ??= JudgementType.Miss;
 
+                    if (IsJapaneseCharacter(index, i) && cell.FirstCorrectDelta == null && cell.State == CellState.Wrong)
+                    {
+                        missed++;
+                        counts[JudgementType.Miss]++;
+                    }
+                    if (JapaneseCharacterTiming && cell.EndTargetTime.HasValue && cell.FirstEndDelta == null
+                        && cell.State is CellState.Untyped or CellState.Abandoned or CellState.Wrong)
+                    {
+                        missed++;
+                        counts[JudgementType.Miss]++;
+                        cell.EndJudgedTier = JudgementType.Miss;
+                    }
                     bool phantom = cell.State == CellState.Abandoned;
 
                     if (cell.State != CellState.Untyped && !phantom)
@@ -3346,7 +3411,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 cell = line.Cells[targetIndex];
             }
 
-            double delta = judgedDeltaFor(line, targetIndex, time);
+            double delta = IsJapaneseCharacter(activeLineIndex, targetIndex) ? time - cell.TargetTime : judgedDeltaFor(line, targetIndex, time);
 
             // SPACES ARE UNTIMED (backlog 148), decided here rather than after the match so that
             // EVERY reading of this press agrees on what its cell was worth: the correct press
@@ -3764,7 +3829,21 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             advanceCaretToFrontier();
 
             raise(CharJudged, new CharJudgement(activeLineIndex, judgedCellIndex, type, delta, points, combo));
-            rollForwardIfFinishedEarly(time);
+            if (JapaneseCharacterTiming && cell.EndTargetTime is double endTarget && cell.FirstEndDelta == null)
+            {
+                double endTime = japaneseCommitEndTime ?? time;
+                double endDelta = endTime - endTarget;
+                var endType = TypeBeatResultMapping.AwardedTier(WindowsFor(cell).Classify(endDelta), cell.HeldWrongBeforeJudged, CorrectionCredit);
+                cell.FirstEndDelta = endDelta;
+                cell.EndJudgedTier = endType;
+                counts[endType]++;
+                int endPoints = (int)Math.Round(SyncWindows.BasePoints(endType) * (1 + Math.Min(combo, combo_cap) / (double)combo_cap));
+                score += endPoints;
+                creditCombo(judgedCellIndex);
+                syncTimeline.Add(new SyncSample(endTime, endDelta));
+                raise(CharJudged, new CharJudgement(activeLineIndex, judgedCellIndex, endType, endDelta, endPoints, combo, Phase: 1));
+            }
+            rollForwardIfFinishedEarly(japaneseCommitEndTime ?? time);
             if (completedJapanese)
                 protectJapaneseCompletion();
             return true;
@@ -4472,7 +4551,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 foreach (var cell in line.Cells)
                 {
                     if (isTimed(cell))
-                        totalTimedCells++;
+                        totalTimedCells += JapaneseCharacterTiming && cell.EndTargetTime.HasValue ? 2 : 1;
                 }
             }
         }
@@ -5170,7 +5249,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 foreach (var cell in line.Cells)
                 {
                     if (isTimed(cell) && cell.State == CellState.Correct && cell.JudgedDelta is double d)
+                    {
                         qualitySum += WindowsFor(cell).SyncQuality(d);
+                        if (JapaneseCharacterTiming && cell.FirstEndDelta is double endDelta)
+                            qualitySum += WindowsFor(cell).SyncQuality(endDelta);
+                    }
                 }
             }
 

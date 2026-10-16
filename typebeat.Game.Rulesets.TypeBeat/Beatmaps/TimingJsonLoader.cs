@@ -347,11 +347,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             return false;
         }
 
-        /// <summary>The object's optional <c>original</c> string (backlog 330), or null when absent, empty or not a string.</summary>
+        /// <summary>The object's optional <c>original</c> string (backlog 330), including an empty editor placeholder, or null when absent or not a string.</summary>
         private static string? readOriginal(JsonElement element)
             => element.TryGetProperty("original", out JsonElement originalElement)
                && originalElement.ValueKind == JsonValueKind.String
-               && originalElement.GetString() is { Length: > 0 } original
+               && originalElement.GetString() is string original
                 ? original
                 : null;
 
@@ -633,7 +633,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                     SyllableSplits = keptSplits,
                     Pauses = keptPauses,
                     // Display data only (backlog 330); kept exactly as written.
-                    Original = wordOriginals != null && m < wordOriginals.Count && wordOriginals[m] != tokens[m] ? wordOriginals[m] : null,
+                    Original = wordOriginals != null && m < wordOriginals.Count ? wordOriginals[m] : null,
                 });
 
                 prevEnd = we;

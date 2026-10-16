@@ -6,7 +6,6 @@ using System.Linq;
 using NUnit.Framework;
 using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
 using typebeat.Game.Tests.Beatmaps;
-using typebeat.Game.Utils;
 
 namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
 {
@@ -14,15 +13,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
     public class DevelopmentDifficultyTest
     {
         [Test]
-        public void ExperimentalCalibrationOnlyAppliesToDevelopmentBuilds()
+        public void RuntimeUsesPublishedCalibrationInEveryBuild()
         {
-#if DEBUG
-            Assert.That(DevelopmentFeatures.ExperimentalDifficulty, Is.True);
-            Assert.That(ChunkedEndurance.Active, Is.SameAs(ChunkedEndurance.Development));
-#else
-            Assert.That(DevelopmentFeatures.ExperimentalDifficulty, Is.False);
             Assert.That(ChunkedEndurance.Active, Is.SameAs(ChunkedEndurance.Live));
-#endif
             Assert.That(ChunkedEndurance.Live.overlap_whole_map, Is.False);
             Assert.That(ChunkedEndurance.Live.overlap_max_seconds, Is.EqualTo(60.75));
             Assert.That(ChunkedEndurance.Live.chunk_length_scale, Is.EqualTo(1500));
@@ -32,7 +25,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             var ruleset = new TypeBeatRuleset();
             var beatmap = new TestWorkingBeatmap(new TypeBeatBeatmap());
             var calculator = new TypeBeatDifficultyCalculator(ruleset.RulesetInfo, beatmap);
-            Assert.That(calculator.Version, Is.EqualTo(DevelopmentFeatures.ExperimentalDifficulty ? 8 : 7));
+            Assert.That(calculator.Version, Is.EqualTo(14));
         }
 
         [TestCase(0.5, 2.9307039332939406)]
@@ -105,10 +98,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         }
 
         [Test]
-        public void RuntimeRatingUsesTheBuildsActiveCalibration()
+        public void RuntimeRatingUsesThePublishedCalibration()
         {
             var lines = steady(100);
-            var expected = LyricDifficulty.RateChunked(lines, 1, false, LyricDifficulty.ShippedScores, ChunkedEndurance.Active).Report;
+            var expected = LyricDifficulty.RateChunked(lines, 1, false, LyricDifficulty.ShippedScores, ChunkedEndurance.Live).Report;
             var actual = LyricDifficulty.ComputeDetail(lines);
             Assert.That(actual.Stars, Is.EqualTo(expected.Stars).Within(1e-12));
             Assert.That(actual.DifficultCharacters, Is.EqualTo(expected.LengthCharacters).Within(1e-9));

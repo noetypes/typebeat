@@ -954,9 +954,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Scoring
         /// against. 0 for a rate the formula cannot price, which prices any miss on such a play as a
         /// zeroed cleanliness term rather than falling back to the map's cell count.
         /// </summary>
-        public static double DifficultCharactersFor(IEnumerable<LyricLine> lines, IReadOnlyList<Mod>? mods)
-            => EligibleRate(mods) is double rate
-                ? LyricDifficulty.ComputeDetail(lines, rate, IsLiterate(mods), LyricDifficulty.Live, JudgementArmFor(mods)).DifficultCharacters
+        public static double DifficultCharactersFor(IEnumerable<LyricLine> lines, IReadOnlyList<Mod>? mods, string? language = null)
+            => PolyglotRatingSupport.Supports(lines, mods, language) && PerformancePointsDisplay.RateFor(mods) is double rate
+                ? LyricDifficulty.ComputeDetail(PolyglotDifficulty.LinesFor(lines, mods, language), rate, IsLiterate(mods), LyricDifficulty.Live, JudgementArmFor(mods)).DifficultCharacters
                 : 0;
 
         /// <summary>
@@ -969,7 +969,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Scoring
             double first = double.PositiveInfinity, last = double.NegativeInfinity;
             bool literate = IsLiterate(mods);
 
-            foreach (LyricLine line in lines)
+            foreach (LyricLine line in PolyglotDifficulty.LinesFor(lines, mods))
             {
                 foreach (TimedUnit unit in line.Units)
                 {
@@ -984,7 +984,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Scoring
                 }
             }
 
-            double rate = EligibleRate(mods) ?? 1;
+            double rate = PerformancePointsDisplay.RateFor(mods) ?? 1;
             return double.IsFinite(first) && double.IsFinite(last) ? Math.Max(0, last - first) / (1000 * rate) : 0;
         }
 
@@ -1003,8 +1003,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Scoring
             return 1 - 0.60 * remaining * remaining;
         }
 
-        public static double? StarsFor(IEnumerable<LyricLine> lines, IReadOnlyList<Mod>? mods)
-            => EligibleRate(mods) is double rate ? LyricDifficulty.Compute(lines, rate, IsLiterate(mods), LyricDifficulty.Live, JudgementArmFor(mods)) : (double?)null;
+        public static double? StarsFor(IEnumerable<LyricLine> lines, IReadOnlyList<Mod>? mods, string? language = null)
+            => PolyglotRatingSupport.Supports(lines, mods, language) && PerformancePointsDisplay.RateFor(mods) is double rate ? LyricDifficulty.Compute(PolyglotDifficulty.LinesFor(lines, mods, language), rate, IsLiterate(mods), LyricDifficulty.Live, JudgementArmFor(mods)) : (double?)null;
 
         /// <summary>
         /// The mod multiplier for a play. There is NO rate term here on purpose: DT / HT are priced

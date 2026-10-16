@@ -36,9 +36,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Mods
     /// <item>AVAILABLE only on a map that records originals (<see cref="IsAvailableFor"/>).</item>
     /// </list>
     ///
-    /// <para>The star rating and the WPM figures stay the ROMANISED map's: neither the difficulty
-    /// calculator nor the pace statistics read the stamp, and the song select marks them as such
-    /// while this mod is selected.</para>
+    /// <para>Star rating uses Latin/Cyrillic original-script characters and keyboard costs, or the
+    /// shortest accepted romaji input for Japanese. Other scripts retain romanized SR and have no pp. WPM figures still describe the romanised lyric.</para>
     ///
     /// <para>A MOD, not an ERA: a replay is identified as a Polyglot play by the mod in its score, and
     /// no CONFIG frame bit is spent on the mod itself. Extended bit 4 separately records the
@@ -71,8 +70,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Mods
 
         public override LocalisableString UnavailableReason => "This map has no original-script lyrics";
 
-        /// <summary>Song select rates a Polyglot selection on the romanised lyric (see the class summary) and says so.</summary>
-        public override LocalisableString RatingNote => "star rating and WPM are the romanised lyric's";
+        /// <summary>SR follows Polyglot inputs; pace statistics still describe the romanised lyric.</summary>
+        public override LocalisableString RatingNote => "WPM uses romanised lyrics";
 
         /// <summary>Whether each decoded beatmap records originals, computed once per beatmap instance.</summary>
         private static readonly ConditionalWeakTable<IBeatmap, object> has_originals = new ConditionalWeakTable<IBeatmap, object>();

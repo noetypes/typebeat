@@ -87,7 +87,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         }
 
         [Test]
-        public void TestJapaneseWordsIgnoreRomanisedSubdivisions()
+        public void TestJapaneseCharactersUseMatchingRomanisedSubdivisions()
         {
             AddStep("use a subdivided kana word", () => testLine = new LyricLine
             {
@@ -102,11 +102,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                 },
             });
             load();
-            AddAssert("the whole mapper word has one timing window", () => engine.Lines[0].Syllables.Count == 1
-                && engine.Lines[0].Syllables[0].StartTime == 0 && engine.Lines[0].Syllables[0].EndTime == 300000);
+            AddAssert("matching subdivisions anchor Japanese characters", () => engine.Lines[0].Cells.Select(c => c.TargetTime).SequenceEqual(new[] { 0d, 50, 100, 200, 300 }));
             press("konnichiha");
             AddAssert("all kana typed correctly", () => engine.Lines[0].Cells.All(c => c.State == CellState.Correct) && engine.Mistypes == 0);
-            AddAssert("the recorder stores the word timing rule", () => frames.Single(f => f.IsConfigExtended).JapaneseWordTiming);
+            AddAssert("the recorder stores the word timing rule", () => frames.Single(f => f.IsConfigExtended).JapaneseCharacterTiming);
             AddAssert("the recorded timing and score replay exactly", reDerivedMatchesLive);
         }
 
@@ -126,15 +125,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
                 },
             });
             load();
-            AddAssert("only original spaces are typeable", () => engine.Lines[0].DisplayText == (originalSpaces ? "月 と テンシ" : "月とテンシ"));
+            AddAssert("only original spaces are typeable", () => engine.Lines[0].DisplayText == "月とテンシ");
             AddAssert("scoring objects use the same cell stream", () => Player.GameplayState.Beatmap.HitObjects.OfType<TypeBeatHitObject>().Single().NestedHitObjects.OfType<TypeBeatCharObject>().Count()
-                == engine.Lines[0].Cells.Count(c => c.IsTypeable));
+                == engine.Lines[0].Cells.Sum(c => c.IsTypeable ? c.EndTargetTime.HasValue ? 2 : 1 : 0));
             press("tuki");
-            if (originalSpaces)
-                AddStep("type the first original space", () => InputManager.Key(Key.Space));
             press("to");
-            if (originalSpaces)
-                AddStep("type the second original space", () => InputManager.Key(Key.Space));
             press("tennshi");
             AddAssert("kanji, hiragana and katakana are correct", () => engine.Lines[0].Cells.All(c => c.State == CellState.Correct) && engine.Mistypes == 0);
             AddAssert("spaced or joined play replays exactly", reDerivedMatchesLive);
@@ -187,6 +182,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         {
             AddStep("word skipping on", () => config.SetValue(TypeBeatRulesetSetting.SpaceSkipsWord, true));
             load();
+            AddStep("legacy single-character skip rule", () => engine.JapaneseWordSkip = false);
             press("t");
             AddStep("skip the unfinished moon", () => InputManager.Key(Key.Space));
             AddAssert("only 月 was skipped", () => engine.CaretIndex == 1 && engine.JapanesePending.Length == 0

@@ -563,6 +563,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
         /// <summary>Bit 8: Japanese Space skips the remainder of the authored word.</summary>
         public bool JapaneseWordSkip;
 
+        /// <summary>Bit 9: Japanese character spans with independent start/end grades.</summary>
+        public bool JapaneseCharacterTiming;
+
         /// <summary>
         /// The final line sealed as soon as it was fully typed correctly (see
         /// <see cref="Gameplay.TypingEngine.EarlyFinish"/>). Bit 4 (value 16) of the extended flags
@@ -652,7 +655,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
         /// Parameters are append-only and named, as <see cref="CreateConfigFrame"/>'s are; each one
         /// defaults to clear, which is what a replay with no extended frame decodes to.
         /// </summary>
-        public static TypeBeatReplayFrame CreateExtendedConfigFrame(double time, bool rushCapCostsAccuracy = false, bool inputEra2 = false, bool authoredSyllablesOnly = false, bool alignSubdivisionTargets = false, bool earlyFinish = false, bool japaneseRomajiInput = false, bool japaneseWordTiming = false, bool japaneseInputEra2 = false, bool japaneseWordSkip = false) => new TypeBeatReplayFrame(time, CONFIG_EXTENDED)
+        public static TypeBeatReplayFrame CreateExtendedConfigFrame(double time, bool rushCapCostsAccuracy = false, bool inputEra2 = false, bool authoredSyllablesOnly = false, bool alignSubdivisionTargets = false, bool earlyFinish = false, bool japaneseRomajiInput = false, bool japaneseWordTiming = false, bool japaneseInputEra2 = false, bool japaneseWordSkip = false, bool japaneseCharacterTiming = false) => new TypeBeatReplayFrame(time, CONFIG_EXTENDED)
         {
             EarlyFinish = earlyFinish,
             RushCapCostsAccuracy = rushCapCostsAccuracy,
@@ -663,6 +666,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
             JapaneseWordTiming = japaneseWordTiming,
             JapaneseInputEra2 = japaneseInputEra2,
             JapaneseWordSkip = japaneseWordSkip,
+            JapaneseCharacterTiming = japaneseCharacterTiming,
         };
 
         /// <summary>Bit 0 of the EXTENDED CONFIG frame's (second) flags word: an over-cap press was
@@ -687,6 +691,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
         private const int ext_flag_japanese_word_timing = 64;
         private const int ext_flag_japanese_input_era_2 = 128;
         private const int ext_flag_japanese_word_skip = 256;
+        private const int ext_flag_japanese_character_timing = 512;
 
         /// <summary>Bit 0 of the CONFIG frame's flags word: wrong input allowed (fixed by every replay on disk).</summary>
         private const int flag_allow_wrong_input = 1;
@@ -780,6 +785,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                 JapaneseWordTiming = (flags & ext_flag_japanese_word_timing) != 0;
                 JapaneseInputEra2 = (flags & ext_flag_japanese_input_era_2) != 0;
                 JapaneseWordSkip = (flags & ext_flag_japanese_word_skip) != 0;
+                JapaneseCharacterTiming = (flags & ext_flag_japanese_character_timing) != 0;
                 return;
             }
 
@@ -814,6 +820,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
             | (JapaneseWordTiming ? ext_flag_japanese_word_timing : 0)
             | (JapaneseInputEra2 ? ext_flag_japanese_input_era_2 : 0)
             | (JapaneseWordSkip ? ext_flag_japanese_word_skip : 0)
+            | (JapaneseCharacterTiming ? ext_flag_japanese_character_timing : 0)
             | (EarlyFinish ? ext_flag_early_finish : 0);
 
         private int configFlags() =>

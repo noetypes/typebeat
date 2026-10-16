@@ -519,6 +519,29 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(engine.Lines[0].Cells.Select(c => c.State), Is.All.EqualTo(CellState.Correct));
         }
 
+        [TestCase(false, "Noël", "Noel", true)]
+        [TestCase(false, "Noël", "NOEL", true)]
+        [TestCase(false, "Noël", "Noël", true)]
+        [TestCase(true, "Noël", "Noel", true)]
+        [TestCase(true, "NOËL", "NOEL", true)]
+        [TestCase(true, "Noël", "NoEl", false)]
+        [TestCase(true, "NOËL", "NOeL", false)]
+        [TestCase(false, "Noël", "Nool", false)]
+        [TestCase(false, "café", "cafe", false)]
+        public void EDiaeresisAcceptsPlainEAndRetainsTheOriginal(bool literate, string original, string input, bool correct)
+        {
+            var engine = polyglotEngine(line(unit("noel", 1000, 2000, original)), literate: literate);
+            engine.CaseSensitive = literate;
+            string displayBefore = engine.Lines[0].DisplayText;
+
+            foreach (char c in PolyglotText.InputCharacters(input))
+                engine.ProcessKey(c, 1000);
+
+            Assert.That(engine.Lines[0].Cells.All(c => c.State == CellState.Correct), Is.EqualTo(correct));
+            Assert.That(engine.Lines[0].DisplayText, Is.EqualTo(displayBefore));
+            Assert.That(displayBefore, Does.Contain(literate ? original : original.ToLowerInvariant()));
+        }
+
         [Test]
         public void APressIsMatchedInNfc()
         {

@@ -39,6 +39,75 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             return length;
         }
 
+        internal static string? CompleteInput(string kana, string following = "")
+        {
+            string? input = ShortestInput(kana, following);
+            if (input != null && Matches(kana, input, following) == (Match.Complete | Match.Prefix))
+                input += "n";
+            return input;
+        }
+
+        internal static string? ShortestInput(string kana, string following = "")
+        {
+            var memo = new Dictionary<int, string?>();
+            return walk(0);
+            string? walk(int at)
+            {
+                if (at == kana.Length)
+                    return "";
+                if (memo.TryGetValue(at, out var cached))
+                    return cached;
+                string? best = null;
+                foreach (var (length, spelling) in edges(kana, at, following))
+                {
+                    string? tail = walk(at + length);
+                    if (tail != null && (best == null || spelling.Length + tail.Length < best.Length))
+                        best = spelling + tail;
+                }
+                memo[at] = best;
+                return best;
+            }
+        }
+
+        internal static int[]? InputEnds(string kana, string input, string following = "")
+        {
+            var memo = new Dictionary<(int, int), int[]?>();
+            return walk(0, 0);
+            int[]? walk(int at, int typed)
+            {
+                if (at == kana.Length)
+                    return typed == input.Length ? Array.Empty<int>() : null;
+                if (memo.TryGetValue((at, typed), out var found))
+                    return found;
+                foreach (var (length, spelling) in edges(kana, at, following))
+                {
+                    if (typed + spelling.Length > input.Length || !input.AsSpan(typed, spelling.Length).SequenceEqual(spelling.AsSpan()))
+                        continue;
+                    var tail = walk(at + length, typed + spelling.Length);
+                    if (tail == null)
+                        continue;
+                    var ends = new int[length + tail.Length];
+                    for (int i = 0; i < length; i++)
+                        ends[i] = typed + Math.Max(1, spelling.Length - length + i + 1);
+                    Array.Copy(tail, 0, ends, length, tail.Length);
+                    memo[(at, typed)] = ends;
+                    return ends;
+                }
+                memo[(at, typed)] = null;
+                return null;
+            }
+        }
+
+        internal static int MinimumInputs(string kana, string following = "")
+        {
+            if (kana == "っ" && following.Length > 0 && edges(following, 0, "").Any(e => isGeminateConsonant(e.Spelling[0]) && e.Spelling[0] != 'n'))
+                return 1;
+            var costs = new int[kana.Length + 1];
+            for (int at = kana.Length - 1; at >= 0; at--)
+                costs[at] = edges(kana, at, following).Select(e => e.Spelling.Length + costs[at + e.Length]).DefaultIfEmpty(1 + costs[at + 1]).Min();
+            return costs[0];
+        }
+
         internal static Match Matches(string kana, string input, string following = "")
         {
             var memo = new Dictionary<(int, int), Match>();

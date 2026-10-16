@@ -28,6 +28,13 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
         private const int segmentation_cost = 2500;
         private const int particle_preference = 2500;
 
+        // Conservative lyric spellings for common homophones. This only affects generated
+        // surfaces; the dictionary still accepts explicitly authored kanji and their readings.
+        private static readonly HashSet<string> kanaSpellings = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "あなた", "かける", "また", "ひとり",
+        };
+
         internal static string? Generate(string text, CancellationToken token = default)
         {
             token.ThrowIfCancellationRequested();
@@ -85,7 +92,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
         internal static bool HasDictionaryReading(string surface, string authored)
         {
             string? kana = JapaneseRomaji.ReadAuthored(authored);
-            return kana != null && dictionary.Value.HasSurface(normaliseReading(kana), surface);
+            return kana != null && dictionary.Value.MatchesReading(normaliseReading(kana), surface);
         }
 
         private static string normaliseReading(string reading)
@@ -222,6 +229,40 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
             public bool HasSurface(string reading, string surface)
                 => readings.TryGetValue(reading, out var entries) && entries.Any(e => e.Surface == surface);
 
+            public bool MatchesReading(string reading, string surface)
+            {
+                if (HasSurface(reading, surface))
+                    return true;
+                if (surface.Length < 2)
+                    return false;
+                var failed = new HashSet<(int Surface, int Kana)>();
+                return match(0, 0);
+
+                bool match(int source, int kana)
+                {
+                    if (source == surface.Length || kana == reading.Length)
+                        return source == surface.Length && kana == reading.Length;
+                    if (!failed.Add((source, kana)))
+                        return false;
+                    // Keep alternate readings within compounds, e.g. 一人 + で = hitoride,
+                    // even when the forward tagger chooses ichinin for 一人 in isolation.
+                    for (int length = 1; length <= Math.Min(longestReading, reading.Length - kana); length++)
+                    {
+                        if (!readings.TryGetValue(reading.Substring(kana, length), out var entries))
+                            continue;
+                        foreach (var entry in entries)
+                        {
+                            if (surface.AsSpan(source).StartsWith(entry.Surface.AsSpan(), StringComparison.Ordinal)
+                                && match(source + entry.Surface.Length, kana + length))
+                                return true;
+                        }
+                    }
+                    string direct = JapaneseRomaji.Hiragana(surface[source].ToString());
+                    return reading.AsSpan(kana).StartsWith(direct.AsSpan(), StringComparison.Ordinal)
+                           && match(source + 1, kana + direct.Length);
+                }
+            }
+
             public int Connection(int right, int left) => connections[right + leftSize * left];
 
             public List<Conversion> Convert(IReadOnlyList<string> words, List<Conversion> previous, CancellationToken token)
@@ -255,7 +296,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Import
                     void extend(Entry entry, int length)
                     {
                         int end = at + length;
-                        string surface = entry.Surface;
+                        string reading = kana.Substring(at, length);
+                        string surface = kanaSpellings.Contains(reading) ? reading : entry.Surface;
                         // Allow a compound such as 不安定 across "fuan tei", keeping the
                         // surfaces "不安" and "定" in their existing word timing windows.
                         int[] splits = boundaries.Where(b => b > at && b < end).OrderBy(b => b).ToArray();

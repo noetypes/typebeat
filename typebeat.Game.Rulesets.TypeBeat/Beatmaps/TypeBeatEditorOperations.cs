@@ -872,8 +872,18 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
         /// </summary>
         private static bool setOriginalLineText(EditorBeatmap editorBeatmap, TypeBeatHitObject hitObject, string rawUserText)
         {
+            var (sourceText, sourcePipes) = originalMarkers(rawUserText);
+            if (sourceText == OriginalCaption(hitObject.Line))
+                return SetLineOriginal(editorBeatmap, hitObject, rawUserText);
             string? language = LyricOriginals.RomanisationLanguage(editorBeatmap.BeatmapInfo.Metadata.Language, new[] { rawUserText });
-            var romanised = LyricOriginals.RomaniseLine(rawUserText, language, keepMarkers: true);
+            if (JapaneseReading.IsJapanese(language))
+            {
+                var linked = Import.OriginalLyricGenerator.MatchWords(hitObject.Line, sourceText, typebeat.Game.Beatmaps.BeatmapLanguage.Japanese);
+                if (linked.Any(o => o != null)
+                    && string.Concat(linked.Select((o, i) => o ?? hitObject.Line.Units[i].Text)) == string.Concat(sourceText.Split(' ')))
+                    return SetLineOriginal(editorBeatmap, hitObject, rawUserText);
+            }
+            var romanised = LyricOriginals.RomaniseLine(sourceText, language, keepMarkers: true);
 
             // The words the placement sees: each romanised word as it will be typed, and each word the
             // romaniser could not spell as a PLACEHOLDER token no real word can match, so it is placed
@@ -905,6 +915,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             {
                 var kept = new List<TimedUnit>();
                 var pending = new List<UnromanisedWord>();
+                int sourceCursor = 0;
 
                 for (int i = 0; i < units.Count; i++)
                 {
@@ -914,7 +925,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                         continue;
                     }
 
-                    kept.Add(LrcParser.WithOriginal(units[i], i < sources.Count ? sources[i].Original : null));
+                    string? original = i < sources.Count ? sources[i].Original : null;
+                    int at = original == null ? -1 : sourceText.IndexOf(original, sourceCursor, StringComparison.Ordinal);
+                    kept.Add(at < 0 || original == null ? LrcParser.WithOriginal(units[i], original)
+                        : applyOriginalPipes(units[i], original, sourcePipes.Where(p => p > at && p < at + original.Length).Select(p => p - at).ToArray(), language));
+                    if (at >= 0 && original != null)
+                        sourceCursor = at + original.Length;
                 }
 
                 return (string.Join(' ', kept.Select(u => u.Text)), kept, (romanised.Original, pending));
@@ -1038,6 +1054,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 hitObject.Line = rebuild(line, rawText: normalized, units: units);
             }
 
+            hitObject.Line = normalizeOriginalSubdivisions(editorBeatmap, hitObject.Line);
             editorBeatmap.Update(hitObject);
             // The sung end follows the last word only when this commit moved it: a word typed on
             // at the tail, or the tail word typed away. A same-count commit, and any change that
@@ -1486,7 +1503,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
         /// the stored text for a line with no subdivisions and no rests at all, and for a line whose
         /// tokens and units have drifted apart (nothing there can be paired safely).</para>
         /// </summary>
-        public static string PipeDisplayText(LyricLine line)
+        public static string PipeDisplayText(LyricLine line, string? language = null)
         {
             string[] tokens = line.RawText.Split(' ');
 
@@ -1979,6 +1996,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             if (boundary - unit.StartTime < MIN_WORD_SPAN_MS || unit.EndTime - boundary < MIN_WORD_SPAN_MS)
                 return false;
 
+            string? linkedOriginal = unit.Original;
+            if (linkedOriginal == null && line.Original != null)
+                linkedOriginal = Import.OriginalLyricGenerator.MatchWords(line, line.Original, editorBeatmap.Metadata.Language)[unitIndex];
+            string? language = LyricOriginals.RomanisationLanguage(editorBeatmap.Metadata.Language, new[] { linkedOriginal });
+            int? originalCut = linkedOriginal == null ? null : OriginalLyricAlignment.SourceCut(linkedOriginal, unit.Text, cut, language);
             string firstText = unit.Text.Substring(0, cut);
             string secondText = unit.Text.Substring(cut);
 
@@ -2016,6 +2038,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             units[unitIndex] = new TimedUnit
             {
                 Text = firstText,
+                Original = originalCut is int firstCut ? linkedOriginal![..firstCut] : null,
                 StartTime = unit.StartTime,
                 EndTime = boundary,
                 Source = unit.Source,
@@ -2029,6 +2052,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             units.Insert(unitIndex + 1, new TimedUnit
             {
                 Text = secondText,
+                Original = originalCut is int secondCut ? linkedOriginal![secondCut..] : null,
                 StartTime = boundary,
                 EndTime = unit.EndTime,
                 Source = unit.Source,
@@ -2044,9 +2068,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
 
             editorBeatmap.BeginChange();
 
-            // The ORIGINAL (backlog 330) has no cut that corresponds to this one in general, so the two
-            // halves carry none of their own (the line keeps its original as the caption), and an
-            // unromanised word behind the split word moves back a place.
+            // Matching script cuts follow the split. Otherwise retain the line caption without
+            // guessing a character boundary. Pending originals after the split move back a place.
             hitObject.Line = rebuild(line, rawText: string.Join(' ', tokens), units: units.ToArray(),
                 originals: (line.Original ?? (unit.Original != null ? JoinedOriginal(line.Units, line.UnromanisedWords) : null),
                     line.UnromanisedWords.Select(w => w.Position > unitIndex ? w with { Position = w.Position + 1 } : w).ToArray()));
@@ -2380,7 +2403,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
         /// <param name="unitIndex">The word unit within that line.</param>
         /// <param name="caretTime">The editor's caret (playhead) in song time, or null when the
         /// caller has none to offer. Only used when it falls inside the word.</param>
-        public static double? AddSyllableBoundary(EditorBeatmap editorBeatmap, TypeBeatHitObject hitObject, int unitIndex, double? caretTime = null)
+        public static double? AddSyllableBoundary(EditorBeatmap editorBeatmap, TypeBeatHitObject hitObject, int unitIndex, double? caretTime = null, bool originalLyrics = false)
         {
             var line = hitObject.Line;
 
@@ -2388,6 +2411,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 return null;
 
             var unit = line.Units[unitIndex];
+
+            IReadOnlyList<int>? split(int segment) => originalLyrics && unit.Original != null
+                ? bisectOriginalSplit(unit, segment, OriginalSubdivisionLanguage(editorBeatmap, line))
+                : bisectSplit(unit, segment);
 
             // Segment edges: word start, existing boundaries, word end.
             var edges = new List<double> { unit.StartTime };
@@ -2397,7 +2424,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             if (caretTime is double caret && segmentForCaret(unit, edges, caret) is int caretSegment)
             {
                 var caretBoundaries = unit.SyllableBoundaries.Append(caret).OrderBy(b => b).ToArray();
-                replaceUnitBoundaries(editorBeatmap, hitObject, unitIndex, caretBoundaries, bisectSplit(unit, caretSegment));
+                if (split(caretSegment) is not { } caretSplits)
+                    return null;
+                replaceUnitBoundaries(editorBeatmap, hitObject, unitIndex, caretBoundaries, caretSplits);
                 return caret;
             }
 
@@ -2423,7 +2452,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 return null;
 
             var boundaries = unit.SyllableBoundaries.Append(mid).OrderBy(b => b).ToArray();
-            replaceUnitBoundaries(editorBeatmap, hitObject, unitIndex, boundaries, bisectSplit(unit, widestSegment));
+            if (split(widestSegment) is not { } midSplits)
+                return null;
+            replaceUnitBoundaries(editorBeatmap, hitObject, unitIndex, boundaries, midSplits);
             return mid;
         }
 
@@ -2809,6 +2840,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 // by the SHIFT+drag that promotes a divider into one.
                 Pauses = pauses,
             };
+
 
             editorBeatmap.BeginChange();
             hitObject.Line = new LyricLine

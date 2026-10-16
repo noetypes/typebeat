@@ -61,6 +61,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         public bool IsCountable => IsTypeable && Expected != ' ';
 
         public double TargetTime { get; internal set; }
+        public double? EndTargetTime { get; internal set; }
+        public JudgementType? EndJudgedTier { get; internal set; }
+        internal double? FirstEndDelta { get; set; }
 
         public CellState State { get; internal set; }
 
@@ -228,7 +231,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         private bool japanese;
         private LyricLine? japaneseAuthoredLine;
         private JapaneseInputPlan? japaneseInput;
-        internal JapaneseInputPlan? JapaneseInput => japanese ? japaneseInput ??= JapaneseInputPlan.Create(DisplayText, japaneseAuthoredLine, japaneseWordTiming) : null;
+        internal JapaneseInputPlan? JapaneseInput => japanese ? japaneseInput ??= JapaneseInputPlan.Create(DisplayText, japaneseAuthoredLine, japaneseWordTiming, japaneseCharacterTiming) : null;
 
         public IReadOnlyList<TypingCell> Cells { get; }
 
@@ -444,18 +447,25 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         private double legacySealGrace;
         private bool alignedSubdivisionTargets;
         private bool japaneseWordTiming = true;
-        private Func<bool, TypingLine>? japaneseTimingFactory;
+        private bool japaneseCharacterTiming;
+        private int[]? rawCellIndices;
+        private Func<bool, bool, TypingLine>? japaneseTimingFactory;
         private TypingLine? legacyJapaneseTiming;
         private TypingLine? wordJapaneseTiming;
 
         /// <summary>Select Japanese word timing without replacing cells held by the renderer.</summary>
         internal void SetJapaneseWordTiming(bool enabled)
         {
+            if (japaneseCharacterTiming)
+            {
+                japaneseWordTiming = enabled;
+                return;
+            }
             if (!japanese || japaneseWordTiming == enabled)
                 return;
 
-            var timing = enabled ? wordJapaneseTiming ??= japaneseTimingFactory!(true)
-                                 : legacyJapaneseTiming ??= japaneseTimingFactory!(false);
+            var timing = enabled ? wordJapaneseTiming ??= japaneseTimingFactory!(true, false)
+                                 : legacyJapaneseTiming ??= japaneseTimingFactory!(false, false);
             timing.SetAlignedSubdivisionTargets(alignedSubdivisionTargets);
             if (timing.DisplayText != DisplayText)
                 throw new InvalidOperationException("Japanese timing eras must have the same display cells.");
@@ -463,6 +473,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             japaneseWordTiming = enabled;
             japaneseInput = null;
             Source = timing.Source;
+            rawCellIndices = timing.rawCellIndices;
             AuthoredGrouping = timing.AuthoredGrouping;
             NaturalGrouping = timing.NaturalGrouping;
             Words = timing.Words;
@@ -476,6 +487,72 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             legacyTargets = timing.legacyTargets;
             legacySealGrace = timing.legacySealGrace;
             rebuildSungPoints();
+        }
+
+        internal void SetJapaneseCharacterTiming(bool enabled)
+        {
+            if (!japanese || japaneseCharacterTiming == enabled)
+                return;
+            var timing = japaneseTimingFactory!(japaneseWordTiming, enabled);
+            timing.SetAlignedSubdivisionTargets(alignedSubdivisionTargets);
+            japaneseCharacterTiming = enabled;
+            japaneseInput = null;
+            Source = timing.Source;
+            rawCellIndices = timing.rawCellIndices;
+            AuthoredGrouping = timing.AuthoredGrouping;
+            NaturalGrouping = timing.NaturalGrouping;
+            Words = timing.Words;
+            Array.Copy(timing.cellWord, cellWord, cellWord.Length);
+            alignedTimingFactory = timing.alignedTimingFactory;
+            alignedTargets = timing.alignedTargets;
+            legacyTargets = timing.legacyTargets;
+            SealGraceMs = timing.SealGraceMs;
+            alignedSealGrace = timing.alignedSealGrace;
+            legacySealGrace = timing.legacySealGrace;
+            alignedSubdivisionTargets = timing.alignedSubdivisionTargets;
+            for (int i = 0; i < Cells.Count; i++)
+            {
+                Cells[i].TargetTime = timing.Cells[i].TargetTime;
+                Cells[i].EndTargetTime = timing.Cells[i].EndTargetTime;
+            }
+            rebuildSungPoints();
+        }
+
+        private void configureJapaneseEndpoints()
+        {
+            if (!japaneseCharacterTiming || JapaneseInput == null)
+                return;
+            for (int i = 0; i < Cells.Count; i++)
+            {
+                string? reading = JapaneseInput.CharacterReadingAt(i);
+                if (reading == null || JapaneseRomaji.MinimumInputs(reading, i + 1 < Cells.Count ? JapaneseInput.CharacterReadingAt(i + 1) ?? "" : "") <= 2)
+                    continue;
+                Cells[i].EndTargetTime = JapaneseCharacterEnd(i);
+            }
+        }
+
+        /// <summary>The end of a Japanese character's sung span, including authored rests.</summary>
+        internal double JapaneseCharacterEnd(int cell)
+        {
+            double end = Source.Units.LastOrDefault()?.EndTime ?? Source.SingEndTime;
+            int raw = rawCellIndices?[cell] ?? cell;
+            int offset = 0;
+            foreach (var unit in Source.Units)
+            {
+                if (raw >= offset && raw < offset + unit.Text.Length)
+                {
+                    int local = raw - offset;
+                    int ordinal = unit.Text.Take(local).Count(Typeability.IsPolyglotTypeCell);
+                    double[] targets = CellTargetsFor(unit, unit.Text.Count(Typeability.IsPolyglotTypeCell), Typeability.IsPolyglotTypeCell);
+                    end = ordinal + 1 < targets.Length ? targets[ordinal + 1] : unit.EndTime;
+                    foreach (var pause in unit.Pauses)
+                        if (pause.SplitChar > local && unit.Text.Take(pause.SplitChar).Count(Typeability.IsPolyglotTypeCell) == ordinal + 1)
+                            end = pause.StartTime;
+                    break;
+                }
+                offset += unit.Text.Length + 1;
+            }
+            return Math.Max(Cells[cell].TargetTime, end);
         }
 
         /// <summary>Switch timing eras without replacing cells referenced by the renderer or engine.</summary>
@@ -498,6 +575,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             for (int i = 0; i < Cells.Count; i++)
                 Cells[i].TargetTime = aligned ? alignedTargets[i] : legacyTargets![i];
             SealGraceMs = aligned ? alignedSealGrace : legacySealGrace;
+            configureJapaneseEndpoints();
             rebuildSungPoints();
         }
 
@@ -667,18 +745,20 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// syllable cuts be carried back onto the original.</param>
         /// <param name="alignSubdivisionTargets">The target era (see <see cref="FromLyricLine"/>).</param>
         /// <param name="japaneseWordTiming">Ignore romanised subdivisions within Japanese words.</param>
-        public static TypingLine ForMods(LyricLine line, bool literate, bool polyglot, string? language, bool alignSubdivisionTargets = false, bool japaneseWordTiming = true)
+        public static TypingLine ForMods(LyricLine line, bool literate, bool polyglot, string? language, bool alignSubdivisionTargets = false, bool japaneseWordTiming = true, bool japaneseCharacterTiming = false)
         {
             if (!polyglot)
                 return FromLyricLine(line, literate, alignSubdivisionTargets);
 
-            var derived = PolyglotLine.Derive(line, language, japaneseWordTiming);
+            var derived = PolyglotLine.Derive(line, language, japaneseWordTiming, japaneseCharacterTiming);
             var result = withTargetEra(build(derived.Line, literate, CellRules.Polyglot, derived.NaturalSplits, derived.RawCluster), alignSubdivisionTargets);
             result.japanese = JapaneseReading.IsJapanese(language);
             result.japaneseAuthoredLine = line;
             result.japaneseWordTiming = japaneseWordTiming;
+            result.japaneseCharacterTiming = japaneseCharacterTiming;
             if (result.japanese)
-                result.japaneseTimingFactory = wordTiming => ForMods(line, literate, true, language, japaneseWordTiming: wordTiming);
+                result.japaneseTimingFactory = (wordTiming, characterTiming) => ForMods(line, literate, true, language, japaneseWordTiming: wordTiming, japaneseCharacterTiming: characterTiming);
+            result.configureJapaneseEndpoints();
             return result;
         }
 
@@ -894,6 +974,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
             var result = new TypingLine(line, cells, Math.Min(sealGrace, max_seal_grace_ms), authored, natural, words, cellWord, lastUnitEnd,
                 buildJamoHeads(cells, defaultSources, rawCluster));
+            result.rawCellIndices = defaultSources?.ToArray();
             if (!alignSubdivisions)
                 result.alignedTimingFactory = () => build(line, literate, rules, naturalSplits, rawCluster, alignSubdivisions: true);
             return result;

@@ -27,7 +27,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Objects.Drawables
         /// than left to the insertion order the framework happens to add nested objects in. It is
         /// also the order <c>typebeat-core.js</c> walks, which is the point.
         /// </summary>
-        private readonly SortedDictionary<int, DrawableTypeBeatCharObject> charDrawablesByCell = new SortedDictionary<int, DrawableTypeBeatCharObject>();
+        private readonly SortedDictionary<(int Cell, int Phase), DrawableTypeBeatCharObject> charDrawablesByCell = new SortedDictionary<(int Cell, int Phase), DrawableTypeBeatCharObject>();
 
         public DrawableTypeBeatHitObject(TypeBeatHitObject hitObject)
             : base(hitObject)
@@ -48,7 +48,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Objects.Drawables
 
             if (hitObject is DrawableTypeBeatCharObject charDrawable)
             {
-                charDrawablesByCell[charDrawable.HitObject.CellIndex] = charDrawable;
+                charDrawablesByCell[(charDrawable.HitObject.CellIndex, charDrawable.HitObject.Phase)] = charDrawable;
                 AddInternal(charDrawable);
             }
         }
@@ -96,7 +96,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Objects.Drawables
             if (TypeBeatResultMapping.CellResult(judgement.Type, TypoRule.Deferred) is not HitResult result)
                 return;
 
-            if (!charDrawablesByCell.TryGetValue(judgement.CellIndex, out var charDrawable))
+            if (!charDrawablesByCell.TryGetValue((judgement.CellIndex, judgement.Phase), out var charDrawable))
                 return;
 
             charDrawable.ApplyEngineResult(result, judgement.Delta);
@@ -117,12 +117,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Objects.Drawables
         /// </summary>
         public void ApplySealResults(Func<int, HitResult> resultForCell)
         {
-            foreach ((int cellIndex, var charDrawable) in charDrawablesByCell)
+            foreach ((var key, var charDrawable) in charDrawablesByCell)
             {
                 if (charDrawable.Judged)
                     continue;
 
-                charDrawable.ApplyEngineResult(resultForCell(cellIndex));
+                charDrawable.ApplyEngineResult(charDrawable.HitObject.ScoringEnabled ? resultForCell(key.Cell) : HitResult.IgnoreHit);
             }
 
             if (!Judged)
@@ -135,7 +135,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Objects.Drawables
         /// play actually reached (see <c>TypeBeatPlayfield.cellWasDueBeforeThePlayStarted</c>).
         /// </summary>
         public DrawableTypeBeatCharObject? CellAt(int cellIndex)
-            => charDrawablesByCell.TryGetValue(cellIndex, out var cell) ? cell : null;
+            => charDrawablesByCell.TryGetValue((cellIndex, 0), out var cell) ? cell : null;
 
         protected override void CheckForResult(bool userTriggered, double timeOffset)
         {

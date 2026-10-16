@@ -9,11 +9,9 @@ namespace typebeat.Game.Utils
 #if DEBUG
         public static bool DifficultyTags => true;
         public static bool NormalizeEditorStatistics => true;
-        public static bool ExperimentalDifficulty => true;
 #else
         public static bool DifficultyTags => false;
         public static bool NormalizeEditorStatistics => false;
-        public static bool ExperimentalDifficulty => false;
 #endif
     }
 }

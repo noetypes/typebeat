@@ -756,9 +756,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Edit
 
                 if (!ReferenceEquals(runsUnit, unit) || runsOriginalView != originalView || !string.Equals(runsDisplay, display, StringComparison.Ordinal))
                 {
-                    runs = originalView
-                        ? new[] { new PausedWord.Run(unit.Original!, unit.StartTime, unit.EndTime) }
-                        : PausedWord.DisplayRuns(display, unit, unit.StartTime, unit.EndTime);
+                    string? language = TypeBeatEditorOperations.OriginalSubdivisionLanguage(editorBeatmap, hitObject.Line);
+                    var displayed = originalView ? OriginalLyricSubdivisions.Project(unit, language) : unit;
+                    runs = PausedWord.DisplayRuns(originalView ? displayed.Text : display, displayed, unit.StartTime, unit.EndTime,
+                        originalView ? Typeability.IsPolyglotTypeCell : null);
                     runsUnit = unit;
                     runsDisplay = display;
                     runsOriginalView = originalView;
