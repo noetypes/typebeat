@@ -17,6 +17,7 @@ This update keeps original-script lyrics aligned with romanized timing, adds Jap
 - Allow the addition of empty per-word original-script fields for non-English maps. When generating originals, prioritize an attached `.txt`, `.lrc`, `.elrc` or `.ttml` lyrics file and align it to the map, replacing matched existing originals. Japanese generation uses the bundled dictionary offline.
 - Preserve authored Japanese readings during spelling corrections, including alternate kanji readings and compounds spanning timed words. Prefer a researched set of common hiragana spellings for demonstratives, greetings, conjunctions and adverbs, using approved dictionary surface/reading pairs to preserve homophones. Keep English phrases intact during Japanese dictionary conversion, including contractions and punctuation. Convert committed `[ ] . ,` input to `「 」 。 、` while preserving IME composition and Japanese punctuation in the original lyrics.
 - Reduce Japanese editor loading and subdivision-display work through bounded reading/alignment caches, direct dictionary lookups and cached handle applicability.
+- Prefer Japanese context for ambiguous English dictionary matches on predominantly Japanese lines, so `no saki` and `no hate` convert to original script while clearly identifiable English phrases remain intact.
 
 ## Japanese Polyglot gameplay and scoring
 
