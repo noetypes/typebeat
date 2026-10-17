@@ -104,6 +104,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             {
                 Text = left.Text + right.Text,
                 Original = left.Original == null && right.Original == null ? null : (left.Original ?? left.Text) + (right.Original ?? right.Text),
+                OriginalSplits = left.OriginalSplits.Concat(right.OriginalSplits.Select(link => new OriginalLyricSplit(
+                    link.TextIndex + cut, link.OriginalIndex + (left.Original ?? left.Text).Length)))
+                    .Concat(left.Original != null && right.Original != null
+                        ? new[] { new OriginalLyricSplit(cut, left.Original.Length) } : Array.Empty<OriginalLyricSplit>())
+                    .OrderBy(link => link.TextIndex).ToArray(),
                 StartTime = left.StartTime,
                 EndTime = right.EndTime,
                 Source = TimingSource.Explicit,

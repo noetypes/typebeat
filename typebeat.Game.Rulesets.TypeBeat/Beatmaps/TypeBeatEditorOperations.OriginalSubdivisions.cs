@@ -82,11 +82,70 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             // Editing the spelling, or attaching originals, must preserve romaji-only cuts.
             if (pipes.SequenceEqual(visible))
                 return unit;
-            // Source marker edits own the shared cuts. Filter a copy first so moving a
-            // visible source cut retains its time even when hidden romaji-only cuts exist.
-            unit = OriginalLyricSubdivisions.AlignAutomaticCuts(unit, language);
-            var mapped = pipes.Select(p => OriginalLyricSubdivisions.TextCut(unit, p, language)).Where(p => p.HasValue).Select(p => p!.Value).Distinct().ToArray();
-            return applyPipes(new[] { unit }, new[] { unit.Text }, new[] { (IReadOnlyList<int>)mapped }, out _)[0];
+            var requested = pipes.Select(p => OriginalLyricSubdivisions.TextCut(unit, p, language)).ToArray();
+            // A mapper may explicitly link custom spellings which the reading cannot align.
+            // Existing inferred/explicit links retain their identity when the source marker moves.
+            if (unit.OriginalSplits.Count > 0 || requested.Any(p => !p.HasValue))
+                return applyManualOriginalPipes(unit, pipes, language);
+            var mapped = requested.Where(p => p.HasValue).Select(p => p!.Value).Distinct().OrderBy(p => p).ToArray();
+            var shared = OriginalLyricSubdivisions.AlignAutomaticCuts(unit, language);
+            var changed = applyPipes(new[] { shared }, new[] { unit.Text }, new[] { (IReadOnlyList<int>)mapped }, out _)[0];
+            var splits = Gameplay.SyllableSegments.SplitsFor(unit);
+            var hidden = splits.Select((cut, i) => (Cut: cut, Time: unit.SyllableBoundaries[i]))
+                               .Where(c => !OriginalLyricSubdivisions.SourceCut(unit, c.Cut, language).HasValue).ToArray();
+            var hiddenPauses = unit.Pauses.Where(p => !OriginalLyricSubdivisions.SourceCut(unit, p.SplitChar, language).HasValue).ToArray();
+            if (hidden.Length == 0 && hiddenPauses.Length == 0)
+                return changed;
+
+            var combined = hidden.Concat(Gameplay.SyllableSegments.SplitsFor(changed)
+                                 .Select((cut, i) => (Cut: cut, Time: changed.SyllableBoundaries[i])))
+                                 .OrderBy(c => c.Cut).ToArray();
+            var pauses = hiddenPauses.Concat(changed.Pauses).OrderBy(p => p.StartTime).ToArray();
+            var merged = new TimedUnit
+            {
+                Text = unit.Text, Original = original, StartTime = unit.StartTime, EndTime = unit.EndTime,
+                Source = changed.Source, Confidence = changed.Confidence,
+                SyllableSplits = combined.Select(c => c.Cut).ToArray(), SyllableBoundaries = combined.Select(c => c.Time).ToArray(), Pauses = pauses,
+            };
+            // A moved shared cut retains its time unless it crosses a hidden cut. New cuts, or
+            // crossed cuts, divide the gaps between the surviving romanized timing anchors.
+            bool countChanged = mapped.Length != Gameplay.PausedWord.Cuts(shared, shared.StartTime, shared.EndTime).Count;
+            if (!countChanged && combined.Where((c, i) => i > 0 && c.Time <= combined[i - 1].Time).Any() == false)
+                return merged;
+            var anchors = new TimedUnit
+            {
+                Text = unit.Text, Original = original, StartTime = unit.StartTime, EndTime = unit.EndTime,
+                Source = unit.Source, Confidence = unit.Confidence,
+                SyllableSplits = unit.SyllableSplits, SyllableBoundaries = unit.SyllableBoundaries, Pauses = pauses,
+            };
+            var allCuts = combined.Select(c => c.Cut).Concat(pauses.Select(p => p.SplitChar)).Distinct().OrderBy(c => c).ToArray();
+            return withChangedPipeCount(anchors, allCuts) ?? unit;
+        }
+
+        private static TimedUnit applyManualOriginalPipes(TimedUnit unit, IReadOnlyList<int> pipes, string? language)
+        {
+            var glyphs = System.Globalization.StringInfo.ParseCombiningCharacters(unit.Original ?? "");
+            if (pipes.Any(p => p <= 0 || !glyphs.Contains(p)) || pipes.Count >= unit.Text.Length)
+                return unit;
+            var allCuts = Gameplay.PausedWord.Cuts(unit, unit.StartTime, unit.EndTime).ToArray();
+            var shared = allCuts.Where(c => OriginalLyricSubdivisions.SourceCut(unit, c, language).HasValue).ToArray();
+            var links = new List<OriginalLyricSplit>();
+            int previous = 0;
+            for (int i = 0; i < pipes.Count; i++)
+            {
+                int? inferred = OriginalLyricSubdivisions.TextCut(unit, pipes[i], language);
+                int cut = shared.Length == pipes.Count ? shared[i]
+                    : allCuts.Length == pipes.Count ? allCuts[i]
+                    : inferred ?? allCuts.FirstOrDefault(c => c > previous);
+                if (cut <= previous || cut >= unit.Text.Length - (pipes.Count - i - 1))
+                    cut = Math.Clamp((int)Math.Round(pipes[i] * unit.Text.Length / (double)unit.Original!.Length),
+                        previous + 1, unit.Text.Length - (pipes.Count - i));
+                links.Add(new OriginalLyricSplit(cut, pipes[i]));
+                previous = cut;
+            }
+            var cuts = allCuts.Concat(links.Select(l => l.TextIndex)).Distinct().OrderBy(c => c).ToArray();
+            var changed = cuts.SequenceEqual(allCuts) ? unit : withChangedPipeCount(unit, cuts) ?? unit;
+            return OriginalLyricSubdivisions.WithExplicit(changed, links);
         }
 
         private static (string Text, IReadOnlyList<int> Cuts) originalMarkers(string text)
@@ -106,7 +165,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
         private static bool sameOriginalWord(TimedUnit left, TimedUnit right)
             => left.Text == right.Text && left.Original == right.Original
                && left.SyllableBoundaries.SequenceEqual(right.SyllableBoundaries)
-               && left.SyllableSplits.SequenceEqual(right.SyllableSplits) && left.Pauses.SequenceEqual(right.Pauses);
+               && left.SyllableSplits.SequenceEqual(right.SyllableSplits) && left.Pauses.SequenceEqual(right.Pauses)
+               && left.OriginalSplits.SequenceEqual(right.OriginalSplits);
 
         private static string updatedOriginalCaption(LyricLine line, List<(TimedUnit? Unit, UnromanisedWord? Pending)> entries, string caption)
         {
@@ -128,8 +188,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             return result.Append(caption[cursor..]).ToString();
         }
 
-        private static IReadOnlyList<int>? bisectOriginalSplit(TimedUnit unit, int segment, string? language)
+        private static IReadOnlyList<int>? bisectOriginalSplit(TimedUnit unit, int segment, string? language, out OriginalLyricSplit? manual)
         {
+            manual = null;
             var splits = Gameplay.SyllableSegments.SplitsFor(unit).ToList();
             if (segment < 0 || segment > splits.Count)
                 return null;
@@ -138,8 +199,22 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             var candidates = Enumerable.Range(lo + 1, Math.Max(0, hi - lo - 1))
                 .Where(c => OriginalLyricSubdivisions.SourceCut(unit, c, language).HasValue).ToArray();
             if (candidates.Length == 0)
-                return null;
-            splits.Insert(segment, candidates[(candidates.Length - 1) / 2]);
+            {
+                if (hi - lo < 2 || unit.Original == null)
+                    return null;
+                int sourceLo = lo == 0 ? 0 : OriginalLyricSubdivisions.SourceCut(unit, lo, language) ?? 0;
+                int sourceHi = hi == unit.Text.Length ? unit.Original.Length
+                    : OriginalLyricSubdivisions.SourceCut(unit, hi, language) ?? unit.Original.Length;
+                var sourceCuts = System.Globalization.StringInfo.ParseCombiningCharacters(unit.Original)
+                    .Where(c => c > sourceLo && c < sourceHi).ToArray();
+                if (sourceCuts.Length == 0)
+                    return null;
+                int cut = (lo + hi) / 2;
+                manual = new OriginalLyricSplit(cut, sourceCuts[(sourceCuts.Length - 1) / 2]);
+                splits.Insert(segment, cut);
+            }
+            else
+                splits.Insert(segment, candidates[(candidates.Length - 1) / 2]);
             return splits;
         }
     }

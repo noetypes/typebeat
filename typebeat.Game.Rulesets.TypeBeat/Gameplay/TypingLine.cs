@@ -62,6 +62,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
         public double TargetTime { get; internal set; }
         public double? EndTargetTime { get; internal set; }
+        public int MinimumRomajiInputs { get; internal set; }
+        public IReadOnlyList<JapaneseInputJudgement>? InputJudgements { get; internal set; }
         public JudgementType? EndJudgedTier { get; internal set; }
         internal double? FirstEndDelta { get; set; }
 
@@ -72,15 +74,21 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// <summary>Delta of the awarded correct keypress, or the wrong keypress.</summary>
         public double? JudgedDelta { get; internal set; }
 
-        /// <summary>The first awarded tier, including correction and rush-cap limits. Rebuilt from replay input.</summary>
+        /// <summary>The best awarded tier, including correction and rush-cap limits. Rebuilt from replay input.</summary>
         public JudgementType? JudgedTier { get; internal set; }
 
         /// <summary>
-        /// Delta of the FIRST correct judgement: set once, never cleared (survives backspace).
-        /// Its presence makes later correct retypes scoring-inert, so backspace-retype cannot
-        /// farm score/combo/accuracy.
+        /// Delta of the awarded correct judgement, retained through backspace and replaced only
+        /// when a retype improves its tier. Its presence prevents duplicate combo and scoring cells.
         /// </summary>
         internal double? FirstCorrectDelta { get; set; }
+        internal double AwardMultiplier { get; set; } = 1;
+        internal int AwardedPoints { get; set; }
+        internal int SyncSampleStart { get; set; } = -1;
+        internal int SyncSampleCount { get; set; }
+        internal double EndAwardMultiplier { get; set; } = 1;
+        internal int EndAwardedPoints { get; set; }
+        internal int EndSyncSampleIndex { get; set; } = -1;
 
         /// <summary>
         /// Whether a wrong character has been typed into this cell at a time when it had not yet
@@ -96,13 +104,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// needs to tell an unfixed typo from a cell nobody typed), this one is history (was it
         /// EVER wrong before it was judged, which is what pricing the correction needs).</para>
         ///
-        /// <para>Set only while <see cref="FirstCorrectDelta"/> is still null, which is what makes
-        /// it a STATE and not a counter, and what settles the two cycle cases at once. Wrong, fix,
-        /// wrong, fix: the flag is already set and stays set, so the second fix (an inert retype)
-        /// re-derives exactly the capped tier the first one was awarded. Correct, backspace, wrong,
-        /// fix: the cell was already judged CLEAN before it ever held a wrong character, the flag is
-        /// never set, and that clean judgement stands, which is right because a cell takes only its
-        /// first result and that result was earned honestly.</para>
+        /// <para>Set only before the first correct award. A later retype keeps this correction
+        /// cap when its timing improves; a cell first judged clean does not acquire the cap from
+        /// a wrong character typed into it after erasure.</para>
         ///
         /// <para>Era-independent, deliberately: it records what HAPPENED, and
         /// <see cref="Scoring.CorrectionCreditRule"/> decides what that is worth, so re-deriving a
@@ -115,11 +119,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// under <see cref="TypingEngine.RushCapCostsAccuracy"/> (backlog 347), which awarded it
         /// <see cref="Scoring.TypeBeatResultMapping.RushCapTier"/> whatever its delta said.
         ///
-        /// <para>HISTORY, like <see cref="HeldWrongBeforeJudged"/>: set when the cell is first
-        /// judged, never cleared by a backspace, so an inert retype re-derives the same Meh the first
-        /// judgement took rather than re-reading the untouched delta as a Great. Also what the lyric
-        /// display reads to draw the cell in the off-time styling, since the delta alone cannot say
-        /// why the cell was graded Meh.</para>
+        /// <para>Retained through erasure. An improved retype replaces this flag along with its
+        /// award; older replay rules keep the first award and flag. The display needs it because
+        /// the timing delta alone cannot say why the cell was graded Meh.</para>
         /// </summary>
         public bool JudgedPastRushCap { get; internal set; }
 
@@ -525,6 +527,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             {
                 Cells[i].TargetTime = timing.Cells[i].TargetTime;
                 Cells[i].EndTargetTime = timing.Cells[i].EndTargetTime;
+                Cells[i].MinimumRomajiInputs = timing.Cells[i].MinimumRomajiInputs;
             }
             rebuildSungPoints();
         }
@@ -536,9 +539,29 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             for (int i = 0; i < Cells.Count; i++)
             {
                 string? reading = JapaneseInput.CharacterReadingAt(i);
-                if (reading == null || JapaneseRomaji.MinimumInputs(reading, i + 1 < Cells.Count ? JapaneseInput.CharacterReadingAt(i + 1) ?? "" : "") <= 2)
+                if (reading == null)
                     continue;
-                Cells[i].EndTargetTime = JapaneseCharacterEnd(i);
+                Cells[i].MinimumRomajiInputs = JapaneseRomaji.MinimumInputs(reading, i + 1 < Cells.Count ? JapaneseInput.CharacterReadingAt(i + 1) ?? "" : "");
+                if (Cells[i].MinimumRomajiInputs > 2)
+                    Cells[i].EndTargetTime = JapaneseCharacterEnd(i);
+            }
+            for (int i = 0; i < Cells.Count; i++)
+            {
+                var group = JapaneseInput.At(i);
+                if (group == null || group.StartCell != i)
+                    continue;
+                string? input = JapaneseRomaji.ShortestInput(group.Reading, JapaneseInput.Following(group));
+                int[]? ends = input == null ? null : JapaneseRomaji.InputEnds(group.Reading, input, JapaneseInput.Following(group));
+                if (ends == null)
+                    continue;
+                int kana = 0, previous = 0;
+                for (int c = group.StartCell; c < group.EndCellExclusive; c++)
+                {
+                    kana += (JapaneseInput.CharacterReadingAt(c) ?? "").Length;
+                    int end = kana > 0 && kana <= ends.Length ? ends[kana - 1] : previous;
+                    Cells[c].MinimumRomajiInputs = Math.Max(1, end - previous);
+                    previous = end;
+                }
             }
         }
 
@@ -874,6 +897,16 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                     pos++;
                 }
 
+                // Punctuation must interpolate within the stretch on its authored side of a
+                // pause. Interpolating across the whole token would put marks inside the silence.
+                // Keep the letter targets above, and use each stretch's edges for missing anchors.
+                if (k < token.Length && unit != null && PausedWord.Of(token, unitStart, unitEnd, unit, rules.IsCell) is PausedWord.Cut paused)
+                {
+                    int tokenStart = pos - token.Length;
+                    foreach (var piece in paused.Pieces)
+                        interpolateUntimedTargets(targets, tokenStart + piece.FirstChar, piece.CharCount, piece.StartTime, piece.StartTime, piece.EndTime);
+                }
+
                 if (m < tokens.Length - 1)
                 {
                     // Inter-word space cell: preceding unit's EndTime.
@@ -896,29 +929,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             // char spread itself uses. A run with nothing after it (trailing punctuation, the '.'
             // of "sat.") attaches to the PRECEDING char's target; one with nothing before it (a
             // line opening on a quote) attaches to the FOLLOWING char's.
-            for (int i = 0; i < n; i++)
-            {
-                if (targets[i].HasValue)
-                    continue;
-
-                int end = i;
-
-                while (end + 1 < n && !targets[end + 1].HasValue)
-                    end++;
-
-                double? before = i > 0 ? targets[i - 1] : null;
-                double? after = end + 1 < n ? targets[end + 1] : null;
-                int len = end - i + 1;
-
-                for (int m = 0; m < len; m++)
-                {
-                    targets[i + m] = before is double p
-                        ? (after is double q ? p + (m + 1) * (q - p) / (len + 1) : p)
-                        : after ?? line.StartTime;
-                }
-
-                i = end;
-            }
+            // Paused stretches have already resolved their marks without crossing a rest.
+            interpolateUntimedTargets(targets, 0, n, line.StartTime);
 
             // Guard: targets non-decreasing (clamp to previous if data is inverted).
             for (int i = 1; i < n; i++)
@@ -989,6 +1001,33 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             if (!alignSubdivisions)
                 result.alignedTimingFactory = () => build(line, literate, rules, naturalSplits, rawCluster, alignSubdivisions: true);
             return result;
+        }
+
+        /// <summary>Interpolate untimed marks using only anchors inside one permitted span.</summary>
+        private static void interpolateUntimedTargets(double?[] targets, int start, int count, double fallback,
+                                                       double? leading = null, double? trailing = null)
+        {
+            int limit = start + count;
+            for (int i = start; i < limit; i++)
+            {
+                if (targets[i].HasValue)
+                    continue;
+
+                int end = i;
+                while (end + 1 < limit && !targets[end + 1].HasValue)
+                    end++;
+
+                double? before = i > start ? targets[i - 1] : leading;
+                double? after = end + 1 < limit ? targets[end + 1] : trailing;
+                int length = end - i + 1;
+                for (int m = 0; m < length; m++)
+                {
+                    targets[i + m] = before is double p
+                        ? (after is double q ? p + (m + 1) * (q - p) / (length + 1) : p)
+                        : after ?? fallback;
+                }
+                i = end;
+            }
         }
 
         private static SyllableGrouping grouping((SyllableGroup[] groups, int[] cellSyllable, int[] markerCells) built, TypingCell[] cells)

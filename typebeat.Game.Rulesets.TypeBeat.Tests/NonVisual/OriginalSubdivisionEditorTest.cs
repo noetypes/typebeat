@@ -79,7 +79,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(hit.Line.Units[0].SyllableSplits, Is.EqualTo(new[] { 2 }), "the lower row may split inside し");
             Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"), Is.EqualTo("しか"));
             TypeBeatEditorOperations.SetWordOriginal(map, hit, 0, "し|か");
-            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line), Is.EqualTo("shi|ka"));
+            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line), Is.EqualTo("sh|i|ka"));
+            Assert.That(hit.Line.Units[0].SyllableBoundaries, Is.EqualTo(new[] { 700d, 1350d }));
         }
 
         [Test]
@@ -139,8 +140,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line, "german"), Is.EqualTo("Stra|s|se"));
             Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "german"), Is.EqualTo("Stra|ße"));
             TypeBeatEditorOperations.SetLineOriginal(map, hit, "Straß|e");
-            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line, "german"), Is.EqualTo("Strass|e"));
-            Assert.That(hit.Line.Units[0].SyllableBoundaries, Is.EqualTo(new[] { 600d }));
+            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line, "german"), Is.EqualTo("Stras|s|e"));
+            Assert.That(hit.Line.Units[0].SyllableBoundaries, Is.EqualTo(new[] { 1200d, 1600d }));
         }
 
         [TestCase("あいうしか")]
@@ -277,6 +278,208 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
                 """;
             Assert.That(TimingJsonLoader.TryParse(ImportSyllables.ApplyToTimingJson(json, "japanese"), out var parsed), Is.True);
             Assert.That(parsed.Single().Units.Single().SyllableBoundaries, Is.Empty);
+        }
+
+        [TestCase("jigokugoku", "地獄国")]
+        [TestCase("jigokugoku!", "地獄国！")]
+        public void SongSpecificReadingProjectsEachValidCutIndependently(string romaji, string original)
+        {
+            var (_, hit) = create(romaji, original, new[] { 2, 4, 6, 8 }, new[] { 300d, 600d, 900d, 1200d });
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"),
+                Is.EqualTo(original.Insert(2, "|").Insert(1, "|")));
+            var projected = OriginalLyricSubdivisions.Project(hit.Line.Units[0], "japanese");
+            Assert.That(projected.SyllableSplits, Is.EqualTo(new[] { 1, 2 }));
+            Assert.That(projected.SyllableBoundaries, Is.EqualTo(new[] { 300d, 900d }));
+            Assert.That(hit.Line.Units[0].SyllableSplits, Is.EqualTo(new[] { 2, 4, 6, 8 }));
+        }
+
+        [Test]
+        public void TententengokuLineKeepsItsSavedCutsAndPolyglotTargets()
+        {
+            var (map, hit) = create("jigokugoku!", "地獄国！");
+            hit.Line = new LyricLine
+            {
+                RawText = "tententengoku jigokugoku!", Original = "天天天国地獄国！",
+                StartTime = 12485.571428571428, EndTime = 14985.571428571428, SingEndTime = 13985.571428571428,
+                Units = new[]
+                {
+                    new TimedUnit
+                    {
+                        Text = "tententengoku", Original = "天天天国", StartTime = 12485.571428571428, EndTime = 13342.714285714284,
+                        SyllableSplits = new[] { 3, 6, 9, 11 },
+                        SyllableBoundaries = new[] { 12699.857142857143, 12914.142857142857, 13128.42857142857, 13235.571428571428 },
+                    },
+                    new TimedUnit
+                    {
+                        Text = "jigokugoku!", Original = "地獄国！", StartTime = 13342.714285714284, EndTime = 13985.571428571428,
+                        SyllableSplits = new[] { 2, 4, 6, 8 },
+                        SyllableBoundaries = new[] { 13449.857142857143, 13557d, 13664.142857142857, 13771.285714285714 },
+                    },
+                },
+            };
+            TypeBeatEditorOperations.NormalizeOriginalSubdivisions(map);
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"), Is.EqualTo("天|天|天|国地|獄|国！"));
+            var played = TypingLine.ForMods(hit.Line, false, true, "japanese", japaneseCharacterTiming: true);
+            Assert.That(played.Cells.Skip(4).Select(c => c.TargetTime),
+                Is.EqualTo(new[] { 13342.714285714284, 13449.857142857143, 13664.142857142857 }).Within(0.000001));
+            var reloaded = OriginalTextFormatTest.Decode(OriginalTextFormatTest.Encode(map)).HitObjects.OfType<TypeBeatHitObject>().Single().Line;
+            Assert.That(reloaded.Units[1].SyllableSplits, Is.EqualTo(new[] { 2, 4, 6, 8 }));
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(reloaded, "japanese"), Is.EqualTo("天|天|天|国地|獄|国！"));
+        }
+
+        [TestCase("kya", "きゃ", "き|ゃ", "k|ya", "き|ゃ", new[] { 300d })]
+        [TestCase("kyaku", "きゃく", "き|ゃ|く", "k|ya|ku", "き|ゃ|く", new[] { 300d, 1150d })]
+        public void AnExplicitOriginalMarkerCanLinkAnOtherwiseUnrepresentableCut(string text, string original, string marked,
+                                                                          string expectedRomaji, string expectedOriginal, double[] times)
+        {
+            var (map, hit) = create(text, original, new[] { 1 }, new[] { 300d });
+            TypeBeatEditorOperations.SetLineOriginal(map, hit, marked);
+            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line), Is.EqualTo(expectedRomaji));
+            Assert.That(hit.Line.Units[0].SyllableBoundaries, Is.EqualTo(times));
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"), Is.EqualTo(expectedOriginal));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AddingAndRemovingOriginalCutsPreservesRomajiOnlyCuts(bool wordRow)
+        {
+            var (map, hit) = create("shika", "しか", new[] { 1 }, new[] { 300d });
+            if (wordRow)
+                TypeBeatEditorOperations.SetWordOriginal(map, hit, 0, "し|か");
+            else
+                TypeBeatEditorOperations.SetLineOriginal(map, hit, "し|か");
+            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line), Is.EqualTo("s|hi|ka"));
+            Assert.That(hit.Line.Units[0].SyllableBoundaries, Is.EqualTo(new[] { 300d, 1150d }));
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"), Is.EqualTo("し|か"));
+            if (wordRow)
+                TypeBeatEditorOperations.SetWordOriginal(map, hit, 0, "しか");
+            else
+                TypeBeatEditorOperations.SetLineOriginal(map, hit, "しか");
+            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line), Is.EqualTo("s|hika"));
+            Assert.That(hit.Line.Units[0].SyllableBoundaries, Is.EqualTo(new[] { 300d }));
+        }
+
+        [Test]
+        public void MovingAnOriginalCutKeepsHiddenRomajiSubdivisionsAndTheirTimes()
+        {
+            var (map, hit) = create("shikai", "しかい", new[] { 1, 3 }, new[] { 300d, 900d });
+            TypeBeatEditorOperations.SetLineOriginal(map, hit, "しか|い");
+            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line), Is.EqualTo("s|hika|i"));
+            Assert.That(hit.Line.Units[0].SyllableBoundaries, Is.EqualTo(new[] { 300d, 900d }));
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"), Is.EqualTo("しか|い"));
+        }
+
+        [Test]
+        public void MovingAnOriginalCutKeepsHiddenRomajiPauses()
+        {
+            var (map, hit) = create("shikai", "しかい", new[] { 3 }, new[] { 900d });
+            var u = hit.Line.Units[0];
+            hit.Line = new LyricLine
+            {
+                RawText = "shikai", Original = "しかい", StartTime = 0, EndTime = 3000, SingEndTime = 2000,
+                Units = new[] { new TimedUnit
+                {
+                    Text = u.Text, Original = u.Original, StartTime = u.StartTime, EndTime = u.EndTime,
+                    SyllableSplits = u.SyllableSplits, SyllableBoundaries = u.SyllableBoundaries,
+                    Pauses = new[] { new WordPause(300, 500, 1) },
+                } },
+            };
+            TypeBeatEditorOperations.SetLineOriginal(map, hit, "しか|い");
+            Assert.That(hit.Line.Units[0].Pauses.Single(), Is.EqualTo(new WordPause(300, 500, 1)));
+            Assert.That(hit.Line.Units[0].SyllableSplits, Is.EqualTo(new[] { 5 }));
+            Assert.That(hit.Line.Units[0].SyllableBoundaries, Is.EqualTo(new[] { 900d }));
+            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line), Is.EqualTo("s|hika|i"));
+        }
+
+        [TestCase("オ|ープン", 1, false)]
+        [TestCase("オー|プン", 2, false)]
+        [TestCase("オ|ープン", 1, true)]
+        [TestCase("オー|プン", 2, true)]
+        public void CustomReadingsAcceptExplicitOriginalCutsAndPersistTheirTiming(string marked, int originalCut, bool wordRow)
+        {
+            var (map, hit) = create("open", "オープン", new[] { 1 }, new[] { 700d });
+            Assert.That(OriginalLyricSubdivisions.SourceCut(hit.Line.Units[0], 1, "japanese"), Is.Null);
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"), Is.EqualTo("オープン"));
+            if (wordRow)
+                Assert.That(TypeBeatEditorOperations.SetWordOriginal(map, hit, 0, marked), Is.True);
+            else
+                Assert.That(TypeBeatEditorOperations.SetLineOriginal(map, hit, marked), Is.True);
+            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line), Is.EqualTo("o|pen"));
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"), Is.EqualTo(marked));
+            Assert.That(hit.Line.Units[0].SyllableBoundaries, Is.EqualTo(new[] { 700d }));
+            var saved = OriginalTextFormatTest.Decode(OriginalTextFormatTest.Encode(map)).HitObjects.OfType<TypeBeatHitObject>().Single().Line;
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(saved, "japanese"), Is.EqualTo(marked));
+            var played = PolyglotLine.Derive(saved, "japanese", japaneseCharacterTiming: true).Line.Units.Single();
+            Assert.That(played.SyllableSplits, Is.EqualTo(new[] { originalCut }));
+            Assert.That(played.SyllableBoundaries, Is.EqualTo(new[] { 700d }));
+        }
+
+        [Test]
+        public void CustomReadingLinksFollowEditsAndRetimeWithoutChangingTheReading()
+        {
+            var (map, hit) = create("open", "オープン", new[] { 1 }, new[] { 700d });
+            TypeBeatEditorOperations.SetWordOriginal(map, hit, 0, "オ|ープン");
+            TypeBeatEditorOperations.SetWordOriginal(map, hit, 0, "オー|プン");
+            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line), Is.EqualTo("o|pen"));
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"), Is.EqualTo("オー|プン"));
+            TypeBeatEditorOperations.SetWordText(map, hit, 0, "op|en");
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"), Is.EqualTo("オー|プン"));
+            Assert.That(hit.Line.Units[0].OriginalSplits.Single(), Is.EqualTo(new OriginalLyricSplit(2, 2)));
+            TypeBeatEditorOperations.SetSyllableBoundary(map, hit, 0, 0, 900);
+            Assert.That(OriginalLyricSubdivisions.Project(hit.Line.Units[0], "japanese").SyllableBoundaries, Is.EqualTo(new[] { 900d }));
+            TypeBeatEditorOperations.SetWordOriginal(map, hit, 0, "オープン");
+            Assert.That(hit.Line.Units[0].OriginalSplits, Is.Empty);
+            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line), Is.EqualTo("op|en"));
+            Assert.That(OriginalLyricSubdivisions.SourceCut(hit.Line.Units[0], 2, "japanese"), Is.Null);
+        }
+
+        [Test]
+        public void OriginalSubdivideButtonAllowsCustomReadings()
+        {
+            var (map, hit) = create("open", "オープン");
+            Assert.That(TypeBeatEditorOperations.AddSyllableBoundary(map, hit, 0, originalLyrics: true), Is.Not.Null);
+            Assert.That(hit.Line.RawText, Is.EqualTo("open"));
+            Assert.That(hit.Line.Units[0].OriginalSplits, Has.Count.EqualTo(1));
+            Assert.That(OriginalLyricSubdivisions.Project(hit.Line.Units[0], "japanese").SyllableBoundaries,
+                Is.EqualTo(hit.Line.Units[0].SyllableBoundaries));
+        }
+
+        [Test]
+        public void CustomReadingLinksSurviveSplittingAndMergingWords()
+        {
+            var (map, hit) = create("open", "オープン", new[] { 1, 2 }, new[] { 700d, 1300d });
+            TypeBeatEditorOperations.SetWordOriginal(map, hit, 0, "オ|ー|プン");
+            Assert.That(TypeBeatEditorOperations.SplitWord(map, hit, 0, 0), Is.True);
+            Assert.That(hit.Line.Units.Select(u => u.Original), Is.EqualTo(new[] { "オ", "ープン" }));
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"), Is.EqualTo("オー|プン"));
+            Assert.That(TypeBeatEditorOperations.MergeWords(map, hit, 0), Is.True);
+            Assert.That(TypeBeatEditorOperations.PipeDisplayText(hit.Line), Is.EqualTo("o|p|en"));
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"), Is.EqualTo("オ|ー|プン"));
+            Assert.That(hit.Line.Units[0].SyllableBoundaries, Is.EqualTo(new[] { 700d, 1300d }));
+        }
+
+        [Test]
+        public void CopiedCustomReadingWordsRetainTheirOriginalLinks()
+        {
+            var (map, hit) = create("open", "オープン", new[] { 1 }, new[] { 700d });
+            TypeBeatEditorOperations.SetWordOriginal(map, hit, 0, "オー|プン");
+            var payload = TypeBeatEditorOperations.CopyUnitTimings(hit, new[] { 0 })!;
+            var (_, parsed) = LyricTimingClipboard.TryParse(LyricTimingClipboard.Serialize(payload));
+            Assert.That(parsed, Is.Not.Null);
+            TypeBeatEditorOperations.PasteWordsAtTime(map, hit, 2000, parsed!);
+            Assert.That(hit.Line.Units, Has.Count.EqualTo(2));
+            Assert.That(OriginalLyricSubdivisions.PipeText(hit.Line.Units[1], "japanese", original: true), Is.EqualTo("オー|プン"));
+            Assert.That(hit.Line.Units[1].SyllableBoundaries, Is.EqualTo(new[] { 2700d }));
+        }
+
+        [Test]
+        public void RemovingARomanizedSubdivisionClearsItsCustomOriginalLink()
+        {
+            var (map, hit) = create("open", "オープン", new[] { 1 }, new[] { 700d });
+            TypeBeatEditorOperations.SetWordOriginal(map, hit, 0, "オー|プン");
+            TypeBeatEditorOperations.RemoveSyllableBoundary(map, hit, 0, 0);
+            Assert.That(hit.Line.Units[0].OriginalSplits, Is.Empty);
+            Assert.That(TypeBeatEditorOperations.OriginalPipeDisplayText(hit.Line, "japanese"), Is.EqualTo("オープン"));
         }
 
         private static (EditorBeatmap Map, TypeBeatHitObject Hit) create(string text, string? original, int[]? splits = null, double[]? boundaries = null)

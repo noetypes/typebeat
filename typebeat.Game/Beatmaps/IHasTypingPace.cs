@@ -21,8 +21,9 @@ namespace typebeat.Game.Beatmaps
         ///
         /// <para>"This beatmap" is the CONVERTED one: a caller that converted with mods gets a
         /// profile of what those mods produced, so the Literate mod's punctuation cells count in
-        /// the target and average WPM exactly as they do in the play. The peak uses the shared raw
-        /// curve, with a presentation floor at the converted map's average.</para>
+        /// the target and average WPM exactly as they do in the play. Polyglot projects supported
+        /// originals to their required inputs for all three figures, using minimum accepted romaji
+        /// for Japanese. The peak uses the shared curve algorithm with a floor at the map's average.</para>
         /// </summary>
         /// <param name="rate">
         /// The CLOCK to read it at: 1 for no rate mod, 1.5 for DoubleTime, 0.75 for HalfTime, and

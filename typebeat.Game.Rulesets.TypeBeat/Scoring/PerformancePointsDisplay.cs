@@ -79,7 +79,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Scoring
                 var counts = PerformancePoints.CountNotes(score)
                     with { DifficultCharacters = model.DifficultCharacters };
 
-                return PerformancePoints.ForPlay(model.Stars, counts, score.Accuracy, score.MaxCombo, score.Mods, PerformancePoints.PlayedDurationFor(lines, score.Mods));
+                return PerformancePoints.ForPlay(model.Stars, counts, score.Accuracy, score.MaxCombo, score.Mods, PerformancePoints.PlayedDurationFor(lines, score.Mods), TypeBeatScoreProcessor.JapaneseComboFor(playableBeatmap));
             }
 
             return score.PP;

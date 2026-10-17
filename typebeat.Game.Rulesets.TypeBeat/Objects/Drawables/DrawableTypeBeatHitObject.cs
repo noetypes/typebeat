@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using typebeat.Game.Rulesets.Objects;
 using typebeat.Game.Rulesets.Objects.Drawables;
 using typebeat.Game.Rulesets.Scoring;
@@ -99,7 +100,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Objects.Drawables
             if (!charDrawablesByCell.TryGetValue((judgement.CellIndex, judgement.Phase), out var charDrawable))
                 return;
 
-            charDrawable.ApplyEngineResult(result, judgement.Delta);
+            charDrawable.ApplyEngineResult(result, judgement.Delta,
+                judgement.Inputs?.Select(i => TypeBeatResultMapping.CellResult(i.Type, TypoRule.Deferred) ?? HitResult.Miss).ToArray());
         }
 
         /// <summary>
@@ -134,8 +136,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Objects.Drawables
         /// cell. Exposed for the playfield's seal, which needs a cell's own target time to tell what the
         /// play actually reached (see <c>TypeBeatPlayfield.cellWasDueBeforeThePlayStarted</c>).
         /// </summary>
-        public DrawableTypeBeatCharObject? CellAt(int cellIndex)
-            => charDrawablesByCell.TryGetValue((cellIndex, 0), out var cell) ? cell : null;
+        public DrawableTypeBeatCharObject? CellAt(int cellIndex, int phase = 0)
+            => charDrawablesByCell.TryGetValue((cellIndex, phase), out var cell) ? cell : null;
 
         protected override void CheckForResult(bool userTriggered, double timeOffset)
         {

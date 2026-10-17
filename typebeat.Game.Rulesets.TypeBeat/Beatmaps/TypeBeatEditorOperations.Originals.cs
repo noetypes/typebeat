@@ -258,7 +258,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 ? unit.SyllableSplits
                 : System.Array.Empty<int>(),
             Pauses = carryPausesAcrossText(unit, text),
-            Original = unit.Original,
+            Original = unit.Original, OriginalSplits = unit.OriginalSplits,
         };
 
         /// <summary>The line's words in slot order, each either a unit or an unromanised word.</summary>

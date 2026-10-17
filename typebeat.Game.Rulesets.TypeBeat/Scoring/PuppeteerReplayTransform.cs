@@ -266,6 +266,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Scoring
             JapaneseInputEra2 = source.JapaneseInputEra2,
             JapaneseInputEra3 = source.JapaneseInputEra3,
             JapaneseCharacterTiming = source.JapaneseCharacterTiming,
+            JapaneseInputScoring = source.JapaneseInputScoring,
+            JapaneseKanaInput = source.JapaneseKanaInput,
+            BestRetypeJudgement = source.BestRetypeJudgement,
         };
     }
 }

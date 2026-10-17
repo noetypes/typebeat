@@ -807,6 +807,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
 
                 // Player caret follows the typing caret index.
                 int caretIndex = engine.CaretIndex;
+                d.SetJapaneseInputProgress(caretIndex, engine.JapanesePendingKanaCount);
                 Vector2 playerPoint = d.ToSpaceOfOtherDrawable(d.PositionOfCell(caretIndex), this);
                 playerCaret.Height = d.LineHeight;
                 playerCaret.SetCellWidth(d.CellWidthAt(caretIndex));

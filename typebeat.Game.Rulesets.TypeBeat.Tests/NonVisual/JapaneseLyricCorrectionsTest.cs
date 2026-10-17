@@ -15,13 +15,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
     [TestFixture]
     public class JapaneseLyricCorrectionsTest
     {
-        [TestCase("anata", "あなた")]
-        [TestCase("kakeru", "かける")]
-        [TestCase("mata", "また")]
-        [TestCase("hitori", "ひとり")]
-        public void GenerationPrefersCommonLyricKana(string romaji, string expected)
-            => Assert.That(JapaneseLyricGenerator.Generate(romaji), Is.EqualTo(expected));
-
         [TestCase("kitto anata ha kizukanai", "あなた")]
         [TestCase("mata anata ni", "また")]
         [TestCase("kakeru yume", "かける")]

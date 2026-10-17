@@ -8,6 +8,7 @@ using System.Linq;
 using osu.Framework.Graphics.Sprites;
 using typebeat.Game.Beatmaps;
 using typebeat.Game.Rulesets.Mods;
+using typebeat.Game.Rulesets.TypeBeat.Mods;
 using typebeat.Game.Rulesets.TypeBeat.Objects;
 using typebeat.Game.Rulesets.TypeBeat.Scoring;
 using typebeat.Game.Utils;
@@ -37,11 +38,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
         /// wedge, all derived from ONE materialised pass over the lyric lines: the curve sweep and
         /// the pace statistics read the same list rather than enumerating the hit objects twice.
         ///
-        /// <para>The TARGET and AVERAGE follow the mods this beatmap was converted with: a line the
-        /// Literate mod stamped has its authored marks counted (see
-        /// <see cref="LyricPaceStatistics.Compute"/>). The curve does NOT, deliberately: it is
-        /// <see cref="LyricWpmCurve"/>, which is mirrored byte for byte on the website, and a map's
-        /// published curve stays comparable across both. The displayed peak is floored at this
+        /// <para>Polyglot projects supported originals to their required input stream, including
+        /// the shortest accepted romaji for Japanese, for all three figures. Target and average
+        /// count Literate punctuation; the shared curve retains its published nomod behavior.
+        /// Polyglot represents required punctuation and composition inputs as ordinary curve cells.
+        /// The displayed peak is floored at this
         /// conversion's average (see <see cref="TypingPaceProfile.ApplyPeakFloor"/>), so it never reports a peak
         /// slower than the map's average typing pace.</para>
         /// </summary>
@@ -50,9 +51,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             if (HitObjects.Count == 0)
                 return null;
 
-            var lines = HitObjects.Select(h => h.Line).ToList();
+            bool literate = HitObjects.Any(h => h.Literate);
+            var lines = paceLinesFor(HitObjects.Select(h => h.Line).ToList(), literate);
             var curve = LyricWpmCurve.Compute(lines, rate: rate);
-            var pace = LyricPaceStatistics.Compute(lines, HitObjects.Any(h => h.Literate), rate);
+            var pace = LyricPaceStatistics.Compute(lines, literate, rate);
 
             // Nothing to draw (no typeable cell at all, or fewer than 16 cells)
             // reports null so the wedge hides the section instead of showing a flat empty graph.
@@ -70,6 +72,17 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             };
         }
 
+        private IReadOnlyList<LyricLine> paceLinesFor(IReadOnlyList<LyricLine> lines, bool literate)
+        {
+            var polyglot = HitObjects.FirstOrDefault(h => h.Polyglot);
+            if (polyglot == null)
+                return lines;
+            Mod[] mods = literate
+                ? new Mod[] { new TypeBeatModPolyglot(), new TypeBeatModLiterate() }
+                : new Mod[] { new TypeBeatModPolyglot() };
+            return PolyglotDifficulty.LinesFor(lines, mods, polyglot.PolyglotLanguage, forPace: true);
+        }
+
         public BeatmapDifficultyTags GetDifficultyTags() => GetDifficultyTagInfo().Tags;
 
         public BeatmapDifficultyTagInfo GetDifficultyTagInfo()
@@ -85,7 +98,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             // and the caller converts with the selected mods for exactly this reason.
             var lines = HitObjects.Select(h => h.Line).ToList();
             bool literate = HitObjects.Any(h => h.Literate);
-            var pace = LyricPaceStatistics.Compute(lines, literate);
+            var paceLines = paceLinesFor(lines, literate);
+            var pace = LyricPaceStatistics.Compute(paceLines, literate);
 
             // How much typing the map is, in the unit the player thinks in. The total comes from the
             // same pass that produces Average WPM below, so the two can never disagree: a word is a
@@ -138,7 +152,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                         return cached;
                 }
 
-                var value = LyricPaceStatistics.Compute(lines, literate, rate);
+                var value = LyricPaceStatistics.Compute(paceLines, literate, rate);
 
                 lock (pacedByRate)
                     pacedByRate[rate] = value;

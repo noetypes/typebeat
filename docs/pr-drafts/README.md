@@ -6,6 +6,12 @@ The current combined PR draft targets `Sparpp/typebeat:main` from `noetypes:code
 [Improve original-script editing, Polyglot gameplay and difficulty ratings](polyglot-editor-difficulty-updates.md).
 This is the combined review branch; no PR is opened for this update.
 
+### Local-only exclusions
+
+Experimental difficulty tags and editor preview statistics normalized to 1x must stay in the local development build and must not be included in the proposed PR. They are still present in the combined branch's code; removing them from the description does not remove them from its diff. Before publishing, prepare the PR branch without their implementation, settings, cached database fields/migrations and dedicated tests, while preserving them in the local development checkout. Keep the shared pace, complexity and rhythm statistics used by the other changes.
+
+The draft's validation results describe the local development checkout. Validate the filtered PR branch separately before publishing.
+
 ## Historical focused drafts
 
 The descriptions below record the earlier focused PR preparation. The original-lyrics and punctuation-cell-counting PRs have since been merged into Sparpp/main.

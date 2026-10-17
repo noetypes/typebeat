@@ -95,7 +95,9 @@ namespace typebeat.Game.Rulesets.TypeBeat
         // v12 rates Polyglot on original-script cells and the shortest Japanese input stream.
         // v13 adds 1% of final SR per negative whole-map typability z-score, including Literate.
         // v14 uses native alphabet keyboard costs and excludes unsupported Polyglot scripts from pp.
-        public override int Version => 14;
+        // v15 refreshes cached maximum combo for minimum-romaji Japanese scoring; SR calibration is unchanged.
+        // v16 refreshes Japanese ratings after aligning each valid cut with the authored reading.
+        public override int Version => 16;
 
         protected override DifficultyAttributes CreateDifficultyAttributes(IBeatmap beatmap, Mod[] mods, Skill[] skills)
         {
@@ -120,7 +122,10 @@ namespace typebeat.Game.Rulesets.TypeBeat
             var model = LyricDifficulty.ComputeDetail(lines, rate, PerformancePoints.IsLiterate(mods), LyricDifficulty.Live, PerformancePoints.JudgementArmFor(mods));
 
             return new TypeBeatDifficultyAttributes(mods, model.Stars, model.DifficultCharacters, PerformancePoints.PlayedDurationFor(lines, mods),
-                PolyglotRatingSupport.Supports(objects.Select(h => h.Line), mods, Mods.TypeBeatModPolyglot.LanguageFor(beatmap)));
+                PolyglotRatingSupport.Supports(objects.Select(h => h.Line), mods, Mods.TypeBeatModPolyglot.LanguageFor(beatmap)))
+            {
+                MaxCombo = TypeBeatScoreProcessor.MaximumComboFor(beatmap),
+            };
         }
 
         protected override IEnumerable<DifficultyHitObject> CreateDifficultyHitObjects(IBeatmap beatmap, Mod[] mods) => Enumerable.Empty<DifficultyHitObject>();

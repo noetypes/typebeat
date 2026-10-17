@@ -1176,8 +1176,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Scoring
         /// (<see cref="StarsFor"/>), <paramref name="accuracy"/> the standardised hit accuracy and
         /// <paramref name="maxCombo"/> the highest combo reached.
         ///
-        /// <para>Inputs are clamped rather than trusted: misses and combo into <c>[0, notes]</c>
-        /// (the theoretical max combo of a typing map IS its note count), typos to non-negative
+        /// <para>Inputs are clamped rather than trusted: misses into <c>[0, notes]</c>, combo into
+        /// the minimum-input combo count (normally the note count), typos to non-negative
         /// (they have no upper bound: a player can press as many wrong keys as they like) and
         /// accuracy into <c>[0, 1]</c>. The result is guaranteed finite and non-negative.</para>
         ///
@@ -1194,14 +1194,16 @@ namespace typebeat.Game.Rulesets.TypeBeat.Scoring
             int maxCombo,
             IReadOnlyList<Mod>? mods,
             int typos = 0,
-            double playedDurationSeconds = double.PositiveInfinity)
+            double playedDurationSeconds = double.PositiveInfinity,
+            int? comboNotes = null)
         {
             // No notes describes no play; a zero or non-finite rating prices nothing.
             if (notes <= 0 || !double.IsFinite(starRating) || starRating <= 0)
                 return 0;
 
             misses = Math.Clamp(misses, 0, notes);
-            maxCombo = Math.Clamp(maxCombo, 0, notes);
+            int comboMaximum = Math.Max(1, comboNotes ?? notes);
+            maxCombo = Math.Clamp(maxCombo, 0, comboMaximum);
             difficultCharacters = double.IsFinite(difficultCharacters) ? Math.Max(0, difficultCharacters) : 0;
             accuracy = double.IsFinite(accuracy) ? Math.Clamp(accuracy, 0, 1) : 0;
 
@@ -1243,9 +1245,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Scoring
             // was dropped at all. Because it is a percentage of the product rather than a number of
             // pp beside it, a price zeroed by misses stays zero, and the mod multiplier scales the
             // bonus along with everything else it multiplies.
-            double comboCeiling = Math.Min(combo_bonus_cap, Math.Max(0, notes) / 200.0 * combo_bonus_at_200_cells) / 100.0;
-            double comboRatio = (double)maxCombo / notes;
-            bool comboPerfect = misses == 0 && maxCombo >= notes;
+            double comboCeiling = Math.Min(combo_bonus_cap, comboMaximum / 200.0 * combo_bonus_at_200_cells) / 100.0;
+            double comboRatio = (double)maxCombo / comboMaximum;
+            bool comboPerfect = misses == 0 && maxCombo >= comboMaximum;
             double comboBonus = comboCeiling * comboRatio * (comboPerfect ? combo_bonus_perfect : 1);
 
             // THE BONUS IS INSIDE THE PRODUCT, deliberately, because it is a percentage OF the
@@ -1269,7 +1271,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Scoring
         /// carry that same duration for callers without a beatmap.</para>
         /// </summary>
         public static double ForPlay(double starRating, NoteCounts counts, double accuracy, int maxCombo, IReadOnlyList<Mod>? mods,
-                                     double playedDurationSeconds = double.PositiveInfinity)
-            => Compute(starRating, counts.Notes, counts.DifficultCharacters, counts.Misses, accuracy, maxCombo, mods, counts.Typos, playedDurationSeconds);
+                                     double playedDurationSeconds = double.PositiveInfinity, int? comboNotes = null)
+            => Compute(starRating, counts.Notes, counts.DifficultCharacters, counts.Misses, accuracy, maxCombo, mods, counts.Typos, playedDurationSeconds, comboNotes);
     }
 }

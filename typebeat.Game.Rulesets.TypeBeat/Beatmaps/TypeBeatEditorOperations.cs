@@ -63,7 +63,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             Units = line.Units.Select(u => new TimedUnit
             {
                 Text = u.Text,
-                Original = u.Original,
+                Original = u.Original, OriginalSplits = u.OriginalSplits,
                 StartTime = u.StartTime + deltaMs,
                 EndTime = u.EndTime + deltaMs,
                 Source = u.Source,
@@ -244,7 +244,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 return new TimedUnit
                 {
                     Text = unit.Text,
-                    Original = unit.Original,
+                    Original = unit.Original, OriginalSplits = unit.OriginalSplits,
                     StartTime = start,
                     EndTime = end,
                     Source = source ?? unit.Source,
@@ -266,7 +266,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             return new TimedUnit
             {
                 Text = unit.Text,
-                Original = unit.Original,
+                Original = unit.Original, OriginalSplits = unit.OriginalSplits,
                 StartTime = start,
                 EndTime = end,
                 Source = source ?? unit.Source,
@@ -1098,7 +1098,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                     return new TimedUnit
                     {
                         Text = tokens[i],
-                        Original = u.Original,
+                        Original = u.Original, OriginalSplits = u.OriginalSplits,
                         StartTime = u.StartTime,
                         EndTime = u.EndTime,
                         // Un-subdividing a word IS a timing decision, exactly as subdividing it is,
@@ -1143,7 +1143,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                     return new TimedUnit
                     {
                         Text = tokens[i],
-                        Original = u.Original,
+                        Original = u.Original, OriginalSplits = u.OriginalSplits,
                         StartTime = u.StartTime,
                         EndTime = u.EndTime,
                         // A hand-placed subdivision IS hand timing, exactly as it is when the
@@ -1159,7 +1159,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 return new TimedUnit
                 {
                     Text = tokens[i],
-                    Original = u.Original,
+                    Original = u.Original, OriginalSplits = u.OriginalSplits,
                     StartTime = u.StartTime,
                     EndTime = u.EndTime,
                     Source = u.Source,
@@ -1168,7 +1168,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                     SyllableSplits = splitsFromPipes(tokens[i], u.SyllableBoundaries.Count + 1, u.SyllableSplits, wordPipes),
                     Pauses = carryPausesAcrossText(u, tokens[i]),
                 };
-            }).ToArray();
+            }).Select((unit, i) => OriginalLyricSubdivisions.CarryExplicit(source[i], unit)).ToArray();
 
             authored = any;
             return units;
@@ -1229,7 +1229,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             return new TimedUnit
             {
                 Text = unit.Text,
-                Original = unit.Original,
+                Original = unit.Original, OriginalSplits = unit.OriginalSplits,
                 StartTime = unit.StartTime,
                 EndTime = unit.EndTime,
                 Source = TimingSource.Explicit,
@@ -1449,7 +1449,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 units[i] = new TimedUnit
                 {
                     Text = units[i].Text,
-                    Original = old.Original,
+                    Original = old.Original, OriginalSplits = old.OriginalSplits,
                     // Only the SUBDIVISION travels: the span is the redistribution's, and so is the
                     // Source, because nobody hand-timed where this word now sits.
                     StartTime = units[i].StartTime,
@@ -1614,7 +1614,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             return new TimedUnit
             {
                 Text = unit.Text,
-                Original = unit.Original,
+                Original = unit.Original, OriginalSplits = unit.OriginalSplits,
                 StartTime = unit.StartTime,
                 EndTime = unit.EndTime,
                 Source = unit.Source,
@@ -2000,7 +2000,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             if (linkedOriginal == null && line.Original != null)
                 linkedOriginal = Import.OriginalLyricGenerator.MatchWords(line, line.Original, editorBeatmap.Metadata.Language)[unitIndex];
             string? language = LyricOriginals.RomanisationLanguage(editorBeatmap.Metadata.Language, new[] { linkedOriginal });
-            int? originalCut = linkedOriginal == null ? null : OriginalLyricAlignment.SourceCut(linkedOriginal, unit.Text, cut, language);
+            int? originalCut = linkedOriginal == null ? null : OriginalLyricSubdivisions.SourceCut(LrcParser.WithOriginal(unit, linkedOriginal), cut, language);
             string firstText = unit.Text.Substring(0, cut);
             string secondText = unit.Text.Substring(cut);
 
@@ -2039,6 +2039,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             {
                 Text = firstText,
                 Original = originalCut is int firstCut ? linkedOriginal![..firstCut] : null,
+                OriginalSplits = originalCut is int firstSource ? unit.OriginalSplits
+                    .Where(link => link.TextIndex < cut && link.OriginalIndex < firstSource).ToArray() : Array.Empty<OriginalLyricSplit>(),
                 StartTime = unit.StartTime,
                 EndTime = boundary,
                 Source = unit.Source,
@@ -2053,6 +2055,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             {
                 Text = secondText,
                 Original = originalCut is int secondCut ? linkedOriginal![secondCut..] : null,
+                OriginalSplits = originalCut is int secondSource ? unit.OriginalSplits
+                    .Where(link => link.TextIndex > cut && link.OriginalIndex > secondSource)
+                    .Select(link => new OriginalLyricSplit(link.TextIndex - cut, link.OriginalIndex - secondSource)).ToArray() : Array.Empty<OriginalLyricSplit>(),
                 StartTime = boundary,
                 EndTime = unit.EndTime,
                 Source = unit.Source,
@@ -2412,9 +2417,24 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
 
             var unit = line.Units[unitIndex];
 
+            OriginalLyricSplit? manual = null;
             IReadOnlyList<int>? split(int segment) => originalLyrics && unit.Original != null
-                ? bisectOriginalSplit(unit, segment, OriginalSubdivisionLanguage(editorBeatmap, line))
+                ? bisectOriginalSplit(unit, segment, OriginalSubdivisionLanguage(editorBeatmap, line), out manual)
                 : bisectSplit(unit, segment);
+
+            void commit(IReadOnlyList<double> times, IReadOnlyList<int> cuts)
+            {
+                editorBeatmap.BeginChange();
+                replaceUnitBoundaries(editorBeatmap, hitObject, unitIndex, times, cuts);
+                if (manual is OriginalLyricSplit link)
+                {
+                    var changed = hitObject.Line.Units.ToArray();
+                    changed[unitIndex] = OriginalLyricSubdivisions.WithExplicit(changed[unitIndex], unit.OriginalSplits.Append(link));
+                    hitObject.Line = rebuild(hitObject.Line, units: changed);
+                    editorBeatmap.Update(hitObject);
+                }
+                editorBeatmap.EndChange();
+            }
 
             // Segment edges: word start, existing boundaries, word end.
             var edges = new List<double> { unit.StartTime };
@@ -2426,7 +2446,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 var caretBoundaries = unit.SyllableBoundaries.Append(caret).OrderBy(b => b).ToArray();
                 if (split(caretSegment) is not { } caretSplits)
                     return null;
-                replaceUnitBoundaries(editorBeatmap, hitObject, unitIndex, caretBoundaries, caretSplits);
+                commit(caretBoundaries, caretSplits);
                 return caret;
             }
 
@@ -2454,7 +2474,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             var boundaries = unit.SyllableBoundaries.Append(mid).OrderBy(b => b).ToArray();
             if (split(widestSegment) is not { } midSplits)
                 return null;
-            replaceUnitBoundaries(editorBeatmap, hitObject, unitIndex, boundaries, midSplits);
+            commit(boundaries, midSplits);
             return mid;
         }
 
@@ -2699,7 +2719,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             units[unitIndex] = new TimedUnit
             {
                 Text = unit.Text,
-                Original = unit.Original,
+                Original = unit.Original, OriginalSplits = unit.OriginalSplits,
                 StartTime = unit.StartTime,
                 EndTime = unit.EndTime,
                 Source = unit.Source,
@@ -2709,6 +2729,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 // Moving one dotted line moves a CUT, not a rest: the word's breaths are untouched.
                 Pauses = unit.Pauses,
             };
+
+            units[unitIndex] = OriginalLyricSubdivisions.CarryExplicit(unit, units[unitIndex]);
 
             editorBeatmap.BeginChange();
             hitObject.Line = rebuild(line, units: units);
@@ -2828,7 +2850,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             units[unitIndex] = new TimedUnit
             {
                 Text = unit.Text,
-                Original = unit.Original,
+                Original = unit.Original, OriginalSplits = unit.OriginalSplits,
                 StartTime = unit.StartTime,
                 EndTime = unit.EndTime,
                 Source = TimingSource.Explicit,
@@ -2840,7 +2862,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                 // by the SHIFT+drag that promotes a divider into one.
                 Pauses = pauses,
             };
-
+            if (unit.OriginalSplits.Count > 0)
+                units[unitIndex] = OriginalLyricSubdivisions.WithExplicit(units[unitIndex], unit.OriginalSplits);
 
             editorBeatmap.BeginChange();
             hitObject.Line = new LyricLine
@@ -3157,7 +3180,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             units[unitIndex] = new TimedUnit
             {
                 Text = unit.Text,
-                Original = unit.Original,
+                Original = unit.Original, OriginalSplits = unit.OriginalSplits,
                 StartTime = unit.StartTime,
                 EndTime = unit.EndTime,
                 Source = TimingSource.Explicit,
@@ -3244,7 +3267,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                         End = unit.EndTime - line.StartTime,
                         Chars = unit.Text.Length,
                         Text = unit.Text,
-                        Original = unit.Original,
+                        Original = unit.Original, OriginalSplits = unit.OriginalSplits.Count == 0 ? null : unit.OriginalSplits,
                         Boundaries = unit.SyllableBoundaries.Count == 0
                             ? null
                             : unit.SyllableBoundaries.Select(b => b - line.StartTime).ToList(),
@@ -3437,7 +3460,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             return new TimedUnit
             {
                 Text = target.Text,
-                Original = target.Original,
+                Original = target.Original, OriginalSplits = target.OriginalSplits,
                 StartTime = start,
                 EndTime = end,
                 Source = source,
@@ -3552,7 +3575,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
 
             bool handTimed = source.Granularity != TimingGranularity.Line;
 
-            var units = clampUnits(source.Units.Select(span => pasteUnit(new TimedUnit { Text = span.Text!, Original = span.Original, StartTime = start, EndTime = start }, span, start,
+            var units = clampUnits(source.Units.Select(span => pasteUnit(new TimedUnit { Text = span.Text!, Original = span.Original, OriginalSplits = span.OriginalSplits ?? Array.Empty<OriginalLyricSplit>(), StartTime = start, EndTime = start }, span, start,
                 handTimed ? TimingSource.Explicit : TimingSource.Interpolated, handTimed ? 1 : 0.5, spellingTravels: true)).ToArray(), start, wall);
 
             double singEnd, end;
@@ -3619,7 +3642,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                     End = unit.EndTime - anchor,
                     Chars = unit.Text.Length,
                     Text = unit.Text,
-                    Original = unit.Original,
+                    Original = unit.Original, OriginalSplits = unit.OriginalSplits.Count == 0 ? null : unit.OriginalSplits,
                     Boundaries = unit.SyllableBoundaries.Count == 0 ? null : unit.SyllableBoundaries.Select(b => b - anchor).ToList(),
                     Splits = unit.SyllableSplits.Count == 0 ? null : unit.SyllableSplits.ToList(),
                     Rests = unit.Pauses.Count == 0
@@ -3762,7 +3785,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             {
                 var span = payload.Units[k];
 
-                units.Insert(insertAt + k, pasteUnit(new TimedUnit { Text = span.Text!, Original = span.Original == span.Text ? null : span.Original, StartTime = from, EndTime = from },
+                units.Insert(insertAt + k, pasteUnit(new TimedUnit { Text = span.Text!, Original = span.Original == span.Text ? null : span.Original, OriginalSplits = span.OriginalSplits ?? Array.Empty<OriginalLyricSplit>(), StartTime = from, EndTime = from },
                     new LyricTimingClipboard.UnitSpan
                     {
                         Start = fit(span.Start),

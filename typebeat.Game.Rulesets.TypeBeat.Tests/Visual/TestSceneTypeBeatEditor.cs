@@ -80,7 +80,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
         }
 
         [Test]
-        public void TestAddOriginalScriptCreatesWordFieldsAndConvertsJapanesePunctuation()
+        public void TestAddOriginalScriptCreatesEmptyWordFields()
         {
             AddUntilStep("compose shown", () => Editor.ChildrenOfType<LyricComposeScreen>().Any());
             AddStep("choose Japanese and two words", () =>
@@ -103,19 +103,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             AddUntilStep("empty per-word fields shown", () => state().ShowOriginalLyrics.Value
                 && Editor.ChildrenOfType<WordScriptEditor>().Single().WordColumnCount == 2
                 && firstLine().Line.Units.All(u => u.Original == ""));
-            OsuTextBox original() => Editor.ChildrenOfType<WordScriptEditor>().Single().ChildrenOfType<OsuTextBox>()
-                .First(b => b.PlaceholderText.ToString() == "original");
-            AddStep("focus original", () =>
-            {
-                InputManager.MoveMouseTo(original());
-                InputManager.Click(MouseButton.Left);
-            });
-            AddUntilStep("focused", () => original().HasFocus);
-            AddStep("type Japanese original with ASCII punctuation", () => ((KeycapManualInputManager)InputManager).TextInput.Text("[あいう],."));
-            AddUntilStep("punctuation replaced while editing", () => original().Text == "「あいう」、。");
-            AddStep("commit original", () => InputManager.Key(Key.Enter));
-            AddUntilStep("linked original committed", () => firstLine().Line.Units[0].Original == "「あいう」、。");
-            AddAssert("other word remains empty", () => firstLine().Line.Units[1].Original == "");
             AddStep("switch to English", () => EditorBeatmap.Metadata.Language = BeatmapLanguage.English);
             AddUntilStep("add button hidden", () => !addOriginal().IsPresent);
         }

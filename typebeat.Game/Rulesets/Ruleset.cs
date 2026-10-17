@@ -321,7 +321,7 @@ namespace typebeat.Game.Rulesets
             if (score.IsLegacyScore)
                 modsToCheck = modsToCheck.Where(m => m is not ModClassic);
 
-            return modsToCheck.All(m => m.Ranked);
+            return modsToCheck.All(m => m.IsRankedFor(score.BeatmapInfo));
         }
 
         /// <summary>

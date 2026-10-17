@@ -8,7 +8,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 {
     internal static class JapaneseCharacterReadings
     {
+        private static readonly JapaneseTextCache<(string Surface, string Reading), string[]> readings = new JapaneseTextCache<(string, string), string[]>(2048);
+
         internal static string[] Split(string surface, string reading)
+            => readings.GetOrAdd((surface, reading), static key => split(key.Surface, key.Reading));
+
+        private static string[] split(string surface, string reading)
         {
             var memo = new Dictionary<(int, int), (double Cost, string[] Parts)>();
             return solve(0, 0).Parts;

@@ -57,8 +57,8 @@ namespace typebeat.Game.Screens.Select
             private OsuSpriteText mapperText = null!;
 
             /// <summary>
-            /// What a selected mod says about the figures shown (<see cref="Mod.RatingNote"/>, backlog 331):
-            /// under Polyglot the star rating and the WPM are the ROMANISED map's, and say so here.
+            /// An optional clarification from the selected mods about the displayed rating figures.
+            /// Supported Polyglot scripts are calculated from their required inputs.
             /// </summary>
             private OsuSpriteText ratingNoteText = null!;
 
@@ -235,14 +235,14 @@ namespace typebeat.Game.Screens.Select
                     string? note = m.NewValue.Select(mod => mod.RatingNote.ToString()).FirstOrDefault(n => !string.IsNullOrEmpty(n));
                     ratingNoteText.Text = string.IsNullOrEmpty(note) ? string.Empty : $"  ({note})";
 
-                    // A mod that rewrites the converted beatmap (Literate) moves the count
+                    // Mods that rewrite the converted beatmap (Literate / Polyglot) move the count
                     // statistics' OWN numbers (Words / Average WPM / Target WPM / Complexity / Rhythm),
                     // so those have to be recomputed from a beatmap converted with the new mod
                     // list, exactly as the star rating and pp are priced from a converted map.
                     // updateDisplay does that, and cancels the in-flight computation on its own.
                     // Other mods can change the clock or the judgement arm (HR/Easy); re-read the
                     // cached statistics with the current mod snapshot in both cases.
-                    if (shapesBeatmap(m.OldValue) != shapesBeatmap(m.NewValue))
+                    if (beatmapShapingKey(m.OldValue) != beatmapShapingKey(m.NewValue))
                         Scheduler.AddOnce(updateDisplay);
                     else
                     {
@@ -292,12 +292,11 @@ namespace typebeat.Game.Screens.Select
             }
 
             /// <summary>
-            /// Whether the given mod list carries a mod that rewrites the converted beatmap.
-            /// Literate and Polyglot are the ones this ruleset ships and neither carries a setting, so
-            /// the presence of a shaping mod is the whole of the state the count statistics depend on.
+            /// Identifies the shaping mod combination. Literate and Polyglot have no settings,
+            /// but adding either one changes the statistics even when the other is already selected.
             /// </summary>
-            private static bool shapesBeatmap(IEnumerable<Mod> mods)
-                => ModUtils.BeatmapShapingMods(mods).Count > 0;
+            private static string beatmapShapingKey(IEnumerable<Mod> mods)
+                => string.Join(",", ModUtils.BeatmapShapingMods(mods).Select(m => m.GetType().FullName).OrderBy(name => name, StringComparer.Ordinal));
 
             // Per-beatmap statistics, cached so a mod toggle can re-read pace and rhythm at the new
             // clock without reloading the playable beatmap.

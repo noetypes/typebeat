@@ -155,6 +155,19 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                             if (unit.Original != null)
                                 json.WriteString("original", unit.Original);
 
+                            if (unit.OriginalSplits.Count > 0)
+                            {
+                                json.WriteStartArray("original_splits");
+                                foreach (var split in unit.OriginalSplits)
+                                {
+                                    json.WriteStartArray();
+                                    json.WriteNumberValue(split.TextIndex);
+                                    json.WriteNumberValue(split.OriginalIndex);
+                                    json.WriteEndArray();
+                                }
+                                json.WriteEndArray();
+                            }
+
                             json.WriteNumber("start_ms", unit.StartTime);
                             json.WriteNumber("end_ms", unit.EndTime);
                             json.WriteNumber("score", unit.Confidence);

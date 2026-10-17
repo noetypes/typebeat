@@ -171,11 +171,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 if (unit.Original == null)
                     return unit;
                 var cuts = SyllableSegments.SplitsFor(unit);
-                var mapped = cuts.Select((cut, i) => (Cut: cut, Index: i, Source: OriginalLyricAlignment.SourceCut(unit.Original, unit.Text, cut, language)))
+                var mapped = cuts.Select((cut, i) => (Cut: cut, Index: i, Source: OriginalLyricSubdivisions.SourceCut(unit, cut, language)))
                     .Where(c => c.Source.HasValue).ToArray();
                 return new TimedUnit
                 {
-                    Text = unit.Text, Original = unit.Original, StartTime = unit.StartTime, EndTime = unit.EndTime,
+                    Text = unit.Text, Original = unit.Original, OriginalSplits = unit.OriginalSplits, StartTime = unit.StartTime, EndTime = unit.EndTime,
                     Source = unit.Source, Confidence = unit.Confidence,
                     SyllableSplits = mapped.Select(c => c.Cut).ToArray(),
                     SyllableBoundaries = mapped.Select(c => unit.SyllableBoundaries[c.Index]).ToArray(),
@@ -510,7 +510,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 int segments = boundaries.Count + 1;
 
                 int[]? carried = carryCuts && source != null
-                    ? carry(SyllableSegments.SplitsFor(source), source.Text, nfc, text, sourceIndex, language)
+                    ? carry(SyllableSegments.SplitsFor(source), source.Text, nfc, text, sourceIndex, language, japaneseCharacterTiming ? source : null)
                     : null;
 
                 if (carried != null && carried.Length == segments - 1)
@@ -538,7 +538,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             {
                 foreach (var pause in source.Pauses)
                 {
-                    int[]? mapped = carry(new[] { pause.SplitChar }, source.Text, nfc, text, sourceIndex, language);
+                    int[]? mapped = carry(new[] { pause.SplitChar }, source.Text, nfc, text, sourceIndex, language, source);
                     if (mapped is { Length: 1 })
                         pauses.Add(pause with { SplitChar = mapped[0] });
                 }
@@ -565,7 +565,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
         /// NFC original, then onto the first cell that source character produced. Null when any cut
         /// cannot be carried (see the class summary), which sends the caller to its fallback.
         /// </summary>
-        internal static int[]? carry(IReadOnlyList<int> cuts, string romanised, string nfcOriginal, string cellText, IReadOnlyList<int> sourceIndex, string? language)
+        internal static int[]? carry(IReadOnlyList<int> cuts, string romanised, string nfcOriginal, string cellText, IReadOnlyList<int> sourceIndex, string? language, TimedUnit? authored = null)
         {
             if (cuts.Count == 0)
                 return Array.Empty<int>();
@@ -575,7 +575,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
 
             for (int k = 0; k < cuts.Count; k++)
             {
-                if (OriginalLyricAlignment.SourceCut(nfcOriginal, romanised, cuts[k], language) is not int source)
+                int? mapped = authored == null ? OriginalLyricAlignment.SourceCut(nfcOriginal, romanised, cuts[k], language)
+                    : OriginalLyricSubdivisions.SourceCut(authored, cuts[k], language);
+                if (mapped is not int source)
                     return null;
 
                 int cell = -1;

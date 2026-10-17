@@ -149,7 +149,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         private Box sweepGlow = null!;
         private Box selectionBox = null!;
         private OsuSpriteText[] cells = Array.Empty<OsuSpriteText>();
-        private readonly List<(JapaneseInputPlan.Group Group, OsuSpriteText Text)> furigana = new List<(JapaneseInputPlan.Group, OsuSpriteText)>();
+        private sealed record FuriganaRun(JapaneseInputPlan.Group Group, OsuSpriteText Text, OsuSpriteText Progress)
+        {
+            internal int HighlightedKana = -1;
+        }
+
+        private readonly List<FuriganaRun> furigana = new List<FuriganaRun>();
+        private int pendingJapaneseCell = -1;
+        private int pendingJapaneseKana;
         private float[] advances = Array.Empty<float>();
 
         // --- Space error dots (backlog 197, on by default since PR 2) ---
@@ -563,8 +570,20 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
                     ShadowOffset = TypeBeatStyle.TEXT_SHADOW_OFFSET,
                     Depth = -1,
                 };
-                furigana.Add((group, ruby));
+                var progress = new OsuSpriteText
+                {
+                    Font = ruby.Font,
+                    Anchor = Anchor.TopLeft,
+                    Origin = Anchor.BottomLeft,
+                    Colour = TypeBeatStyle.TypedChar,
+                    AlwaysPresent = true,
+                    ShadowColour = TypeBeatStyle.TextShadow,
+                    ShadowOffset = TypeBeatStyle.TEXT_SHADOW_OFFSET,
+                    Depth = -2,
+                };
+                furigana.Add(new FuriganaRun(group, ruby, progress));
                 content.Add(ruby);
+                content.Add(progress);
             }
 
             InternalChild = content;
@@ -959,12 +978,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             for (int i = 0; i < n; i++)
                 cells[i].Position = new Vector2(cellX[i] + advances[i] * 0.5f, glyphHeight * 0.5f);
 
-            foreach (var (group, ruby) in furigana)
+            foreach (var run in furigana)
             {
+                var (group, ruby, progress) = run;
                 float left = cellX[group.StartCell];
                 float right = cellX[group.EndCellExclusive];
                 ruby.Position = new Vector2((left + right) * 0.5f, -2 * SizeRatio);
                 ruby.Scale = new Vector2(ruby.DrawWidth > 0 ? Math.Min(1f, (right - left) / ruby.DrawWidth) : 1f);
+                positionFuriganaProgress(run);
             }
 
             // The gap dots ride the same content-local coordinates the glyphs do (the auto-shrink
@@ -2436,6 +2457,46 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
             applySyllableMarkers(animate: true);
         }
 
+        public void SetJapaneseInputProgress(int cellIndex, int completedKana)
+        {
+            if (pendingJapaneseCell == cellIndex && pendingJapaneseKana == completedKana)
+                return;
+            pendingJapaneseCell = cellIndex;
+            pendingJapaneseKana = completedKana;
+            foreach (var run in furigana)
+                refreshFurigana(run);
+        }
+
+        private void refreshFurigana(FuriganaRun run)
+        {
+            int count = 0;
+            for (int at = run.Group.StartCell; at < run.Group.EndCellExclusive; at++)
+            {
+                if (Line.Cells[at].State == CellState.Correct)
+                    count += Line.JapaneseInput?.CharacterReadingAt(at)?.Length ?? 0;
+                else
+                {
+                    if (at == pendingJapaneseCell)
+                        count += pendingJapaneseKana;
+                    break;
+                }
+            }
+            count = Math.Clamp(count, 0, run.Group.Reading.Length);
+            if (run.HighlightedKana == count)
+                return;
+            run.HighlightedKana = count;
+            bool complete = count == run.Group.Reading.Length;
+            run.Text.Colour = complete ? TypeBeatStyle.TypedChar : TypeBeatStyle.UntypedChar;
+            run.Progress.Text = !complete && count > 0 ? run.Group.Reading[..count] : string.Empty;
+            positionFuriganaProgress(run);
+        }
+
+        private static void positionFuriganaProgress(FuriganaRun run)
+        {
+            run.Progress.Scale = run.Text.Scale;
+            run.Progress.Position = run.Text.Position - new Vector2(run.Text.DrawWidth * run.Text.Scale.X / 2, 0);
+        }
+
         private void applyCellAlpha(int i, bool animate)
         {
             // THE single composition point for every reason a cell can be dimmed or hidden: the
@@ -2446,17 +2507,22 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
 
             // Ruby must never reveal a word hidden by Flashlight or Recite. A dictionary compound
             // can span several kanji, so all of its cells must be visible before its reading is.
-            foreach (var (group, ruby) in furigana)
+            foreach (var run in furigana)
             {
+                var (group, ruby, progress) = run;
                 if (i < group.StartCell || i >= group.EndCellExclusive)
                     continue;
                 float alpha = 0.85f;
                 for (int at = group.StartCell; at < group.EndCellExclusive; at++)
                     alpha = Math.Min(alpha, cellStateAlpha[at] * cellHidingFactor(at));
+                refreshFurigana(run);
                 if (animate)
+                {
                     ruby.FadeTo(alpha, flashlight_fade_ms, Easing.OutQuint);
+                    progress.FadeTo(alpha, flashlight_fade_ms, Easing.OutQuint);
+                }
                 else
-                    ruby.Alpha = alpha;
+                    ruby.Alpha = progress.Alpha = alpha;
             }
 
             if (animate)

@@ -69,7 +69,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             }
         }
 
-        internal static int[]? InputEnds(string kana, string input, string following = "")
+        internal static int[]? InputEnds(string kana, string input, string following = "", bool allowKana = false)
         {
             var memo = new Dictionary<(int, int), int[]?>();
             return walk(0, 0);
@@ -79,7 +79,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                     return typed == input.Length ? Array.Empty<int>() : null;
                 if (memo.TryGetValue((at, typed), out var found))
                     return found;
-                foreach (var (length, spelling) in edges(kana, at, following))
+                foreach (var (length, spelling) in inputEdges(kana, at, following, allowKana))
                 {
                     if (typed + spelling.Length > input.Length || !input.AsSpan(typed, spelling.Length).SequenceEqual(spelling.AsSpan()))
                         continue;
@@ -108,7 +108,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
             return costs[0];
         }
 
-        internal static Match Matches(string kana, string input, string following = "")
+        internal static Match Matches(string kana, string input, string following = "", bool allowKana = false)
         {
             var memo = new Dictionary<(int, int), Match>();
             return walk(0, 0);
@@ -123,7 +123,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                     return cached;
 
                 Match result = Match.Invalid;
-                foreach (var (length, spelling) in edges(kana, at, following))
+                foreach (var (length, spelling) in inputEdges(kana, at, following, allowKana))
                 {
                     // A kana may allow both a consonant spelling and a vowel pronunciation
                     // (を: wo/o, へ: he/e). Only the actual consonant can confirm a single n.
@@ -138,6 +138,44 @@ namespace typebeat.Game.Rulesets.TypeBeat.Gameplay
                 memo[(at, typed)] = result;
                 return result;
             }
+        }
+
+        /// <summary>Fully entered kana in a valid input prefix, excluding an unfinished romaji syllable.</summary>
+        internal static int CompletedKana(string kana, string input, string following = "", bool allowKana = false)
+        {
+            var memo = new Dictionary<(int, int), int>();
+            return Math.Max(0, walk(0, 0));
+
+            int walk(int at, int typed)
+            {
+                if (typed == input.Length)
+                    return at;
+                if (at == kana.Length)
+                    return -1;
+                if (memo.TryGetValue((at, typed), out int cached))
+                    return cached;
+                int result = -1;
+                foreach (var (length, spelling) in inputEdges(kana, at, following, allowKana))
+                {
+                    if (kana[at] == 'ん' && spelling == "n" && typed + 1 < input.Length && !isConsonant(input[typed + 1]))
+                        continue;
+                    int count = Math.Min(input.Length - typed, spelling.Length);
+                    if (!input.AsSpan(typed, count).SequenceEqual(spelling.AsSpan(0, count)))
+                        continue;
+                    result = Math.Max(result, count < spelling.Length ? at : walk(at + length, typed + spelling.Length));
+                }
+                return memo[(at, typed)] = result;
+            }
+        }
+
+        // Kana is an input alternative only. Keep shortest-romaji and authored reading decoding
+        // independent of keyboard layout, and leave earlier replay grammars unchanged.
+        private static IEnumerable<(int Length, string Spelling)> inputEdges(string kana, int at, string following, bool allowKana)
+        {
+            foreach (var edge in edges(kana, at, following))
+                yield return edge;
+            if (allowKana)
+                yield return (1, kana[at].ToString());
         }
 
         private static IEnumerable<(int Length, string Spelling)> edges(string kana, int at, string following)

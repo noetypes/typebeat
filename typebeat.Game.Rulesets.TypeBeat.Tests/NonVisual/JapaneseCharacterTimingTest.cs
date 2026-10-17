@@ -69,6 +69,57 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(engine.BuildResults().Counts[JudgementType.Ok], Is.EqualTo(1));
         }
 
+        [TestCase(-151, JudgementType.Ok)]
+        [TestCase(-150, JudgementType.Great)]
+        [TestCase(0, JudgementType.Great)]
+        [TestCase(150, JudgementType.Great)]
+        [TestCase(151, JudgementType.Ok)]
+        public void StartKeepsItsSymmetricTimingWindow(double startDelta, JudgementType expected)
+        {
+            var engine = create(source("tsuki", "月"), initialTime: 0);
+            var judgements = new List<CharJudgement>();
+            engine.CharJudged += judgements.Add;
+            engine.ProcessKey('t', 1000 + startDelta);
+            engine.ProcessKey('u', 1400);
+            engine.ProcessKey('k', 1700);
+            engine.ProcessKey('i', 2000);
+
+            Assert.That(judgements.Select(j => (j.Phase, j.Type)), Is.EqualTo(new[] { (0, expected), (1, JudgementType.Great) }));
+            Assert.That(judgements[0].Delta, Is.EqualTo(startDelta));
+        }
+
+        [TestCase(-900, 1, JudgementType.Great)]
+        [TestCase(-151, 1, JudgementType.Great)]
+        [TestCase(-150, 1, JudgementType.Great)]
+        [TestCase(0, 1, JudgementType.Great)]
+        [TestCase(150, 1, JudgementType.Great)]
+        [TestCase(151, 1, JudgementType.Ok)]
+        [TestCase(300, 1, JudgementType.Ok)]
+        [TestCase(301, 1, JudgementType.Meh)]
+        [TestCase(600, 1, JudgementType.Meh)]
+        [TestCase(601, 1, JudgementType.Lagging)]
+        [TestCase(-900, 0.5, JudgementType.Great)]
+        [TestCase(75, 0.5, JudgementType.Great)]
+        [TestCase(76, 0.5, JudgementType.Ok)]
+        [TestCase(300, 2, JudgementType.Great)]
+        [TestCase(301, 2, JudgementType.Ok)]
+        public void FinishOnlyPenalisesLateness(double endDelta, double windowScale, JudgementType expected)
+        {
+            var engine = create(source("tsuki", "月"));
+            engine.WindowScale = windowScale;
+            var judgements = new List<CharJudgement>();
+            engine.CharJudged += judgements.Add;
+            double finishTime = 2000 + endDelta;
+            engine.ProcessKey('t', 1000);
+            engine.ProcessKey('u', 1000 + (finishTime - 1000) / 3);
+            engine.ProcessKey('k', 1000 + 2 * (finishTime - 1000) / 3);
+            engine.ProcessKey('i', finishTime);
+
+            Assert.That(judgements.Select(j => (j.Phase, j.Type)), Is.EqualTo(new[] { (0, JudgementType.Great), (1, expected) }));
+            Assert.That(judgements[1].Delta, Is.EqualTo(Math.Max(0, endDelta)));
+            Assert.That(engine.Lines[0].Cells.Single().EndJudgedTier, Is.EqualTo(expected));
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void UnfinishedOrUnfixedWrongCharacterHasTwoMisses(bool wrong)
@@ -81,7 +132,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         }
 
         [Test]
-        public void ShortKanaHasOneGradeAndRetypingCannotAwardAgain()
+        public void LegacyShortKanaHasOneGradeAndNoFinishWindow()
         {
             var engine = create(source("ka", "か"));
             engine.ProcessKey('k', 1000); engine.ProcessKey('a', 1100);
@@ -113,9 +164,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(first(map).Line.Units.Single().Original, Is.EqualTo("月"));
         }
 
-        [TestCase(false)]
-        [TestCase(true)]
-        public void ReplayScoringCountsBothEndpointsAndBothMisses(bool wrong)
+        [TestCase(false, 1100)]
+        [TestCase(false, 2150)]
+        [TestCase(false, 2200)]
+        [TestCase(true, 2200)]
+        public void ReplayScoringCountsBothEndpointsAndBothMisses(bool wrong, double finishTime)
         {
             var line = source("tsuki", "月");
             var map = OriginalTextFormatTest.BuildBeatmap(new[] { line });
@@ -131,7 +184,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             score.Replay.Frames.Add(TypeBeatReplayFrame.CreateExtendedConfigFrame(1000, inputEra2: true, authoredSyllablesOnly: true,
                 japaneseRomajiInput: true, japaneseInputEra2: true, japaneseCharacterTiming: true));
             var keys = wrong ? new[] { ('t', 1000d), ('z', 1200d) }
-                : new[] { ('t', 1000d), ('u', 1300d), ('k', 1700d), ('i', 2200d) };
+                : new[] { ('t', 1000d), ('u', 1000 + (finishTime - 1000) / 3), ('k', 1000 + 2 * (finishTime - 1000) / 3), ('i', finishTime) };
             foreach (var (key, time) in keys)
             {
                 engine.Update(time);
@@ -154,9 +207,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             }
             else
             {
-                Assert.That(account.Statistics.GetValueOrDefault(HitResult.Great), Is.EqualTo(1), string.Join(", ", account.Statistics.Select(p => $"{p.Key}:{p.Value}")));
-                Assert.That(account.Statistics.GetValueOrDefault(HitResult.Ok), Is.EqualTo(1));
-                Assert.That(account.Accuracy, Is.EqualTo(2d / 3).Within(0.0001));
+                bool greatFinish = finishTime <= 2150;
+                Assert.That(account.Statistics.GetValueOrDefault(HitResult.Great), Is.EqualTo(greatFinish ? 2 : 1), string.Join(", ", account.Statistics.Select(p => $"{p.Key}:{p.Value}")));
+                Assert.That(account.Statistics.GetValueOrDefault(HitResult.Ok), Is.EqualTo(greatFinish ? 0 : 1));
+                Assert.That(account.Accuracy, Is.EqualTo(greatFinish ? 1 : 2d / 3).Within(0.0001));
             }
         }
 
@@ -179,7 +233,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             => Assert.That(OriginalLyricGenerator.MatchLines(new[] { source("nihon", "二本") }, content, BeatmapLanguage.Japanese).Single(), Is.EqualTo("日本"));
 
         [Test]
-        public void LegacyReplayHasOneScoringObjectAndCurrentAutoplayHasTwoGreats()
+        public void LegacyWordTimingReplayKeepsOneScoringObject()
         {
             var map = OriginalTextFormatTest.BuildBeatmap(new[] { source("tsuki", "月") });
             map.BeatmapInfo.Metadata.Language = BeatmapLanguage.Japanese;
@@ -194,12 +248,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             var account = TypeBeatReplayScorer.Score(map, new Mod[] { mod }, legacy, TypoRule.Deferred, ComboRestoreRule.OnFix);
             Assert.That(account.MaximumStatistics.GetValueOrDefault(HitResult.Great), Is.EqualTo(1));
             Assert.That(account.Statistics.GetValueOrDefault(HitResult.Great), Is.EqualTo(1));
-            Assert.That(account.Accuracy, Is.EqualTo(1));
-            var autoplay = new TypeBeatAutoGenerator(map, authoredSyllablesOnly: true, alignSubdivisionTargets: true).Generate();
-            Assert.That(autoplay.Frames.OfType<TypeBeatReplayFrame>().Where(f => f.IsConfigExtended).Select(f => f.JapaneseInputEra3), Is.Not.Empty.And.All.EqualTo(true));
-            account = TypeBeatReplayScorer.Score(map, new Mod[] { mod }, autoplay, TypoRule.Deferred, ComboRestoreRule.OnFix);
-            Assert.That(account.MaximumStatistics.GetValueOrDefault(HitResult.Great), Is.EqualTo(2));
-            Assert.That(account.Statistics.GetValueOrDefault(HitResult.Great), Is.EqualTo(2));
             Assert.That(account.Accuracy, Is.EqualTo(1));
         }
 
@@ -260,14 +308,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             return map;
         }
         private static TypeBeatHitObject first(EditorBeatmap map) => map.HitObjects.OfType<TypeBeatHitObject>().Single();
-        private static TypingEngine create(LyricLine line)
+        private static TypingEngine create(LyricLine line, double initialTime = 1000)
         {
             var engine = new TypingEngine(new LyricBeatmap
             {
                 Metadata = new LyricBeatmapMetadata { Artist = "A", Title = "T", AudioFileName = "a.mp3", FolderPath = "" },
                 Granularity = TimingGranularity.Syllable, Lines = new[] { line },
-            }, polyglot: true, polyglotLanguage: "japanese") { SyllableTiming = true, AuthoredSyllablesOnly = true, FirstCharTiming = true };
-            engine.Update(1000);
+            }, polyglot: true, polyglotLanguage: "japanese") { SyllableTiming = true, AuthoredSyllablesOnly = true, FirstCharTiming = true, JapaneseInputScoring = false };
+            engine.Update(initialTime);
             return engine;
         }
     }

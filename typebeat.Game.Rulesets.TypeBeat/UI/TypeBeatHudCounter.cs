@@ -131,7 +131,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
 
             lastCounts = counts;
             lastMaxCombo = maxCombo;
-            Text = PerformancePointsDisplay.Format(PerformancePoints.ForPlay(stars, counts, scoreProcessor.Accuracy.Value, maxCombo, mods, playedDurationSeconds));
+            Text = PerformancePointsDisplay.Format(PerformancePoints.ForPlay(stars, counts, scoreProcessor.Accuracy.Value, maxCombo, mods, playedDurationSeconds,
+                scoreProcessor is TypeBeatScoreProcessor { HasJapaneseInputScoring: true } japanese ? japanese.ComboNotesJudged : null));
         }
     }
 }

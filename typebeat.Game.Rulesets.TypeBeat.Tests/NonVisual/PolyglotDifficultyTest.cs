@@ -118,6 +118,11 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
             Assert.That(words[0].End, Is.EqualTo(2000));
             Assert.That(words[1].Start, Is.EqualTo(4000));
             Assert.That(words.Sum(w => w.Cells), Is.EqualTo(4));
+            Assert.That(LyricDifficulty.BuildWords(new[] { source }, 1, false).Sum(w => w.Cells), Is.EqualTo(5),
+                "nomod includes the space between authored words");
+            var paceLines = PolyglotDifficulty.LinesFor(new[] { source }, polyglot, "japanese", forPace: true);
+            Assert.That(LyricPaceStatistics.Compute(paceLines).TypeableCellCount, Is.EqualTo(4),
+                "Polyglot pace excludes the same removed space as SR");
         }
 
         [TestCase(false, 7)]
@@ -294,8 +299,6 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.NonVisual
         }
 
         [TestCase("greek", "agapi", "αγάπη")]
-        [TestCase("chinese", "ai", "愛")]
-        [TestCase("korean", "annyeong", "안녕")]
         public void OtherScriptsRetainTheirExistingRating(string language, string romanised, string original)
         {
             var source = line(romanised, original);

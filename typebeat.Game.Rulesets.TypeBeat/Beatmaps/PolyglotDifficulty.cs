@@ -16,7 +16,7 @@ using typebeat.Game.Rulesets.TypeBeat.Mods;
 namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
 {
     /// <summary>
-    /// A rating-only input projection. Latin/Cyrillic originals cost one cell per character;
+    /// An input projection for difficulty and map pace. Latin/Cyrillic originals cost one cell per character;
     /// composition keys add demand at the Shift cost without inventing scoring cells. Japanese
     /// becomes the shortest accepted romaji stream at the live original-character targets.
     /// The authored beatmap and its scoring objects are never modified.
@@ -32,7 +32,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
         internal static IReadOnlyList<InputSegment>? SegmentsFor(TimedUnit unit)
             => costs.TryGetValue(unit, out var cost) ? cost.Segments : null;
 
-        internal static IReadOnlyList<LyricLine> LinesFor(IEnumerable<LyricLine> source, IReadOnlyList<Mod>? mods, string? language = null)
+        internal static IReadOnlyList<LyricLine> LinesFor(IEnumerable<LyricLine> source, IReadOnlyList<Mod>? mods, string? language = null, bool forPace = false)
         {
             var lines = source as IReadOnlyList<LyricLine> ?? source.ToArray();
             if (!PolyglotRatingSupport.Enabled(mods) || !PolyglotRatingSupport.Supports(lines, mods, language))
@@ -40,10 +40,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             language = PolyglotRatingSupport.LanguageFor(lines, language);
             bool japanese = JapaneseReading.IsJapanese(language);
             bool literate = Scoring.PerformancePoints.IsLiterate(mods);
-            return lines.Select(line => project(line, language, literate, japanese)).ToArray();
+            return lines.Select(line => project(line, language, literate, japanese, forPace)).ToArray();
         }
 
-        private static LyricLine project(LyricLine line, string? language, bool literate, bool japanese)
+        private static LyricLine project(LyricLine line, string? language, bool literate, bool japanese, bool forPace)
         {
             if (line.Original == null && line.UnromanisedWords.Count == 0 && line.Units.All(u => u.Original == null))
                 return line;
@@ -51,20 +51,33 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             if (ReferenceEquals(derived, line))
                 return line;
             if (japanese)
-                return projectJapanese(line, language, literate);
+                return projectJapanese(line, language, literate, forPace);
             var units = new List<TimedUnit>();
             foreach (var unit in derived.Units)
             {
+                var text = new StringBuilder(unit.Text.Length);
+                var positions = new int[unit.Text.Length + 1];
+                for (int i = 0; i < unit.Text.Length; i++)
+                {
+                    char c = unit.Text[i];
+                    char key = forPace && literate && Typeability.IsPolyglotPunctuation(c) ? 'a' : proxy(c, language);
+                    // WPM counts a composed letter's extra inputs in full; SR weights them at the
+                    // Shift surcharge rate. Ordinary Shift presses follow the nomod WPM convention.
+                    int extra = forPace && char.IsLetter(c) ? CompositionInputs(c, language) : 0;
+                    text.Append(key, 1 + extra);
+                    positions[i + 1] = text.Length;
+                }
                 var projected = new TimedUnit
                 {
-                    Text = new string(unit.Text.Select(c => proxy(c, language)).ToArray()),
+                    Text = text.ToString(),
                     StartTime = unit.StartTime, EndTime = unit.EndTime,
                     Source = unit.Source, Confidence = unit.Confidence,
-                    SyllableSplits = unit.SyllableSplits,
+                    SyllableSplits = forPace ? unit.SyllableSplits.Select(c => positions[Math.Clamp(c, 0, unit.Text.Length)]).ToArray() : unit.SyllableSplits,
                     SyllableBoundaries = unit.SyllableBoundaries,
-                    Pauses = unit.Pauses,
+                    Pauses = forPace ? unit.Pauses.Select(p => p with { SplitChar = positions[Math.Clamp(p.SplitChar, 0, unit.Text.Length)] }).ToArray() : unit.Pauses,
                 };
-                costs.Add(projected, new InputCost(unit.Text.Where(c => Typeability.IsPolyglotTypeCell(c) || literate && Typeability.IsPolyglotPunctuation(c)).Sum(c => CompositionInputs(c, language))));
+                if (!forPace)
+                    costs.Add(projected, new InputCost(unit.Text.Where(c => Typeability.IsPolyglotTypeCell(c) || literate && Typeability.IsPolyglotPunctuation(c)).Sum(c => CompositionInputs(c, language))));
                 units.Add(projected);
             }
             return new LyricLine
@@ -75,7 +88,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
             };
         }
 
-        private static LyricLine projectJapanese(LyricLine line, string? language, bool literate)
+        private static LyricLine projectJapanese(LyricLine line, string? language, bool literate, bool forPace)
         {
             var typing = TypingLine.ForMods(line, literate, true, language, alignSubdivisionTargets: true, japaneseCharacterTiming: true);
             var plan = typing.JapaneseInput!;
@@ -92,7 +105,8 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                     double end = cell + 1 < typing.Cells.Count ? typing.Cells[cell + 1].TargetTime : typing.Source.SingEndTime;
                     if (current.Expected != ' ')
                         segments.Add((inputs.Count, 1, current.TargetTime, end));
-                    inputs.Add((proxy(current.Expected, language), current.TargetTime, end));
+                    char key = forPace && Typeability.IsPolyglotPunctuation(current.Expected) ? 'a' : proxy(current.Expected, language);
+                    inputs.Add((key, current.TargetTime, end));
                     continue;
                 }
                 if (group.StartCell != cell)
@@ -117,7 +131,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Beatmaps
                         // Romaji punctuation (the long-vowel hyphen) is an actual Japanese input,
                         // even without Literate. Give it a letter cell on the default rating surface.
                         char inputKey = input[previous + key];
-                        inputs.Add((!literate && !Typeability.IsTypeable(inputKey) ? 'a' : inputKey, target, endTime));
+                        inputs.Add(((!literate || forPace) && !Typeability.IsTypeable(inputKey) ? 'a' : inputKey, target, endTime));
                     }
                     previous = end;
                 }

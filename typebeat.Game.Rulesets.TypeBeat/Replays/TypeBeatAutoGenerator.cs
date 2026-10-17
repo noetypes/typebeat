@@ -141,7 +141,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                     if (japanese && line.JapaneseInput?.AtForInput(i) is { } group)
                     {
                         var plan = line.JapaneseInput;
-                        string? input = JapaneseRomaji.CompleteInput(group.Reading, plan.Following(group));
+                        string? input = JapaneseRomaji.ShortestInput(group.Reading, plan.Following(group));
                         int[]? ends = input == null ? null : JapaneseRomaji.InputEnds(group.Reading, input, plan.Following(group));
                         if (input != null && ends != null)
                         {
@@ -161,6 +161,10 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                                 }
                                 inputOffset = inputEnd;
                             }
+                            // A terminal n can be both complete and the prefix of nn. Confirm it
+                            // without adding a second romaji input or a scoring judgement.
+                            if (JapaneseRomaji.Matches(group.Reading, input, plan.Following(group)) == (JapaneseRomaji.Match.Complete | JapaneseRomaji.Match.Prefix))
+                                Frames.Add(new TypeBeatReplayFrame(lastTime, ' '));
                             i = group.EndCellExclusive - 1;
                             continue;
                         }
@@ -182,12 +186,12 @@ namespace typebeat.Game.Rulesets.TypeBeat.Replays
                 // that trim, so does this header, and the watch path primes from the first header it
                 // finds, so the surviving presses are judged on the grouping they were made for.
                 Frames.Insert(Frames.Count - 1, TypeBeatReplayFrame.CreateExtendedConfigFrame(Frames[^1].Time, authoredSyllablesOnly: authoredSyllablesOnly, alignSubdivisionTargets: alignSubdivisionTargets,
-                    earlyFinish: earlyFinish, japaneseCharacterTiming: japanese, japaneseRomajiInput: japanese, japaneseInputEra2: japanese, japaneseInputEra3: japanese));
+                    earlyFinish: earlyFinish, japaneseCharacterTiming: japanese, japaneseInputScoring: japanese, japaneseKanaInput: japanese, bestRetypeJudgement: true, japaneseRomajiInput: japanese, japaneseInputEra2: japanese, japaneseInputEra3: japanese));
 
                 if (Frames.Count > 2)
                 {
                     Frames.Insert(0, TypeBeatReplayFrame.CreateExtendedConfigFrame(Frames[0].Time, authoredSyllablesOnly: authoredSyllablesOnly, alignSubdivisionTargets: alignSubdivisionTargets,
-                        earlyFinish: earlyFinish, japaneseCharacterTiming: japanese, japaneseRomajiInput: japanese, japaneseInputEra2: japanese, japaneseInputEra3: japanese));
+                        earlyFinish: earlyFinish, japaneseCharacterTiming: japanese, japaneseInputScoring: japanese, japaneseKanaInput: japanese, bestRetypeJudgement: true, japaneseRomajiInput: japanese, japaneseInputEra2: japanese, japaneseInputEra3: japanese));
                 }
             }
         }

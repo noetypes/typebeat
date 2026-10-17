@@ -167,11 +167,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.UI
         {
             bool characterTiming = replayScore == null || replayScore.Replay.Frames.OfType<TypeBeatReplayFrame>().FirstOrDefault(f => f.IsConfigExtended)?.JapaneseCharacterTiming == true;
             bool changed = false;
-            foreach (var cell in Beatmap.HitObjects.SelectMany(l => l.NestedHitObjects.OfType<Objects.TypeBeatCharObject>()).Where(c => c.Phase == 1))
-            {
-                changed |= cell.ScoringEnabled != characterTiming;
-                cell.ScoringEnabled = characterTiming;
-            }
+            bool inputScoring = replayScore == null || replayScore.Replay.Frames.OfType<TypeBeatReplayFrame>().FirstOrDefault(f => f.IsConfigExtended)?.JapaneseInputScoring == true;
+            foreach (var cell in Beatmap.HitObjects.SelectMany(l => l.NestedHitObjects.OfType<Objects.TypeBeatCharObject>()))
+                changed |= cell.ConfigureJapaneseScoring(characterTiming, inputScoring);
             if (changed)
                 phaseScoreProcessor?.ApplyBeatmap(Beatmap);
             if (replayScore != null)

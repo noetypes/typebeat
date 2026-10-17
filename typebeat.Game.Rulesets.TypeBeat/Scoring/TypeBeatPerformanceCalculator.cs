@@ -1,6 +1,9 @@
 // Copyright (c) ppy Pty Ltd <contact@ppy.sh>. Licensed under the MIT Licence.
 // See the LICENCE file in the repository root for full licence text.
 
+using System.Linq;
+using typebeat.Game.Beatmaps;
+using typebeat.Game.Rulesets.TypeBeat.Mods;
 using typebeat.Game.Rulesets.Difficulty;
 using typebeat.Game.Rulesets.TypeBeat.Beatmaps;
 using typebeat.Game.Scoring;
@@ -33,7 +36,9 @@ namespace typebeat.Game.Rulesets.TypeBeat.Scoring
             return new PerformanceAttributes
             {
                 Total = PerformancePoints.ForPlay(stars, counts, score.Accuracy, score.MaxCombo, score.Mods,
-                    attributes is TypeBeatDifficultyAttributes durationAttributes ? durationAttributes.PlayedDurationSeconds : double.PositiveInfinity),
+                    attributes is TypeBeatDifficultyAttributes durationAttributes ? durationAttributes.PlayedDurationSeconds : double.PositiveInfinity,
+                    attributes.MaxCombo > 0 && score.BeatmapInfo?.Metadata.Language == BeatmapLanguage.Japanese && score.Mods.OfType<TypeBeatModPolyglot>().Any()
+                        ? attributes.MaxCombo : null),
             };
         }
     }
