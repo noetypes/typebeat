@@ -19,10 +19,8 @@ using typebeat.Game.Tests.Visual;
 namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
 {
     /// <summary>
-    /// The Polyglot mod (backlog 331) through a real Player, on the precedent a non-user-playable mod
-    /// sets in <c>SubmittingPlayer</c>: a play carrying it never asks for a submission token, never
-    /// submits, and is still imported into the local score list (with its replay) once it completes.
-    /// The same play without the mod asks for the token, which is what keeps the first pin honest.
+    /// Polyglot through a real Player: supported languages request a submission token, while
+    /// Chinese and Korean stay local. Each completed play is still imported with its mod and replay.
     /// </summary>
     public partial class TestSceneTypeBeatPolyglot : PlayerTestScene
     {
@@ -41,6 +39,7 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             beatmap.BeatmapInfo.Ruleset = ruleset;
             beatmap.BeatmapInfo.Metadata.Artist = "Test";
             beatmap.BeatmapInfo.Metadata.Title = "Song";
+            beatmap.BeatmapInfo.Metadata.Language = language;
 
             var line = new LyricLine
             {
@@ -55,18 +54,22 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
             return beatmap;
         }
 
-        [Test]
-        public void TestAPolyglotPlayStaysOnThisDevice()
+        [TestCase(BeatmapLanguage.Russian, false)]
+        [TestCase(BeatmapLanguage.Chinese, true)]
+        [TestCase(BeatmapLanguage.Korean, true)]
+        public void TestPolyglotSubmissionFollowsTheMapLanguage(BeatmapLanguage mapLanguage, bool localOnly)
         {
+            AddStep("set map language", () => language = mapLanguage);
             loadWith(new TypeBeatModPolyglot());
 
             AddAssert("the engine plays the original", () => ((TypeBeatPlayfield)Player.DrawableRuleset.Playfield).Engine.Lines[0].DisplayText == "αβ");
-            AddAssert("no submission token was requested", () => !Player.TokenCreationRequested);
+            AddAssert("submission token follows the language policy", () => Player.TokenCreationRequested == !localOnly);
 
             AddUntilStep("the play completes", () => Player.ScoreProcessor.HasCompleted.Value);
             AddUntilStep("the play was saved locally", () => player.ImportedScore != null);
             AddAssert("with the mod on it", () => player.ImportedScore!.ScoreInfo.Mods.Any(m => m is TypeBeatModPolyglot));
-            AddAssert("and nothing was submitted", () => Player.SubmittedScore == null);
+            if (localOnly)
+                AddAssert("and nothing was submitted", () => Player.SubmittedScore == null);
         }
 
         [Test]
@@ -106,6 +109,14 @@ namespace typebeat.Game.Rulesets.TypeBeat.Tests.Visual
 
             AddUntilStep("text input is active as Code with the IME disallowed", () =>
                 os.ActiveProperties?.Equals(new TextInputProperties(TextInputType.Code, AllowIme: false)) == true);
+        }
+
+        private BeatmapLanguage language;
+
+        public override void SetUpSteps()
+        {
+            AddStep("the default language", () => language = BeatmapLanguage.Unspecified);
+            base.SetUpSteps();
         }
 
         private EmulatedTextInput os => ((KeycapManualInputManager)InputManager).TextInput;
