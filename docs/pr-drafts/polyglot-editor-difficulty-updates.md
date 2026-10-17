@@ -1,8 +1,8 @@
 # Improve Polyglot gameplay, editing, scoring, and corrections
 
 Base: `Sparpp/typebeat:main`
-Head: `noetypes:codex/polyglot-editor-difficulty-updates`
-Status: local draft for the proposed PR scope; no pull request opened.
+Head: `noetypes:codex/polyglot-gameplay-editing-scoring`
+Status: open, https://github.com/Sparpp/typebeat/pull/43
 
 ## Description
 
@@ -51,11 +51,3 @@ This update keeps original-script lyrics aligned with romanized timing, adds Jap
 - Surcharge each shifted symbol under Literate, sharing the surcharge only across identical consecutive symbols.
 - Floor displayed Peak WPM at Average WPM. Refresh song-select pace, complexity and rhythm statistics for the selected mods and rate, and prevent stale background results from replacing newer selections.
 - Add configurable character-indicator lead times.
-
-
-## Validation
-
-- Latest pace and Enter regression run: **362 passed**, **0 skipped**, **0 failed**, covering Japanese input and confirmation, line skipping during incomplete readings, input-count-based pace, removed spaces, punctuation, Polyglot ratings and live song-select rate/mod refreshes.
-- Consolidate kana-default and minimum-romaji autoplay coverage, and trim duplicate UI and unsupported-script cases while retaining scoring, replay compatibility and IME regressions.
-- Focused validation after test cleanup: **236 passed**, **0 skipped**, **0 failed**, covering Japanese timing, input scoring, kana defaults, lyric corrections, minimum-romaji autoplay, Polyglot difficulty, furigana highlighting, original-script fields and IME punctuation handling.
-- Targeted editor/UI checks also passed for original-script input and IME, language/import controls, lyric generation, editor offset, pause/quantize controls, Polyglot preview, gray subdivision handles and custom-reading links. Japanese input, combo, accuracy, autoplay and replay tests cover the new scoring behavior and legacy replay configuration.
